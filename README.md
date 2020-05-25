@@ -1,4 +1,4 @@
-# fli3d-lib
+# fli3d_lib
 
 Install these files as libraries in the Arduino IDE by copying them to a subdirectory of ```libraries/```.
 
