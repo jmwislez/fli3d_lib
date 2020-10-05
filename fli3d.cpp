@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (wifi, bus, TM, eeprom functionality)
- * version: 2020-04-14 edited on esp32
+ * version: 2020-10-04
  */
 
 #include "fli3d.h"
@@ -14,23 +14,31 @@
 LinkedList<ccsds_t*> linkedlist_serial; 
 LinkedList<ccsds_t*> linkedlist_udp; 
 LinkedList<ccsds_t*> linkedlist_yamcs; 
+LinkedList<ccsds_t*> linkedlist_fs_ccsds;
+LinkedList<String>   linkedlist_fs_json;
+#ifdef PLATFORM_ESP32CAM
 LinkedList<ccsds_t*> linkedlist_sd_ccsds;
 LinkedList<String>   linkedlist_sd_json;
-WiFiUDP wifiUDP;
-NTPClient timeClient(wifiUDP, eeprom_network.ntp_server, 0);
-RH_ASK radio_tx (RADIO_BAUD, DUMMY_PIN1, RF433_TX_PIN, DUMMY_PIN2);
+#endif
 
-char buffer[TM_MAX_MSG_SIZE];
-char bus_buffer[TM_MAX_MSG_SIZE + 25];
+WiFiUDP wifiUDP;
+WiFiClient wifiTCP;
+FtpServer ftpSrv;
+NTPClient timeClient(wifiUDP, config_network.ntp_server, 0);
+
+#ifdef PLATFORM_ESP32
+RH_ASK radio_tx (RADIO_BAUD, DUMMY_PIN1, RF433_TX_PIN, DUMMY_PIN2);
 char radio_buffer[2*(sizeof(tm_radio_t)+2)];
-char serial_buffer[TM_MAX_MSG_SIZE];
+#endif
+
+char buffer[JSON_MAX_SIZE];
+char bus_buffer[JSON_MAX_SIZE + 25];
+char serial_buffer[JSON_MAX_SIZE];
 
 #ifdef PLATFORM_ESP32
 extern void ota_setup ();
 #endif 
-#ifdef PLATFORM_ESP32CAM
-extern char sd_dir[20];
-#endif 
+char today_dir[14] = "/";
 
 ccsds_hdr_t        ccsds_hdr;
 ccsds_t            ccsds_buffer;
@@ -45,290 +53,409 @@ tm_motion_t        mpu6050;
 tm_pressure_t      bmp280;
 tm_radio_t         radio;
 tm_timer_t         timer;
+var_timer_t        var_timer;
 tc_esp32_t         tc_esp32;
 tc_esp32cam_t      tc_esp32cam;
-debug_esp32_t      debug_esp32;
-debug_esp32cam_t   debug_esp32cam;
 
-eeprom_network_t   eeprom_network;
-eeprom_esp32_t     eeprom_esp32;
-eeprom_esp32cam_t  eeprom_esp32cam;
+config_network_t   config_network;
+config_esp32_t     config_esp32;
+config_esp32cam_t  config_esp32cam;
 
 #ifdef PLATFORM_ESP32
 tm_esp32_t         *tm_this = &esp32;
 tc_esp32_t         *tc_this = &tc_esp32;
 tc_esp32cam_t      *tc_other = &tc_esp32cam;
 sts_esp32_t        *sts_this = &sts_esp32;
-debug_esp32_t      *debug_this = &debug_esp32;
-eeprom_esp32_t     *eeprom_this = &eeprom_esp32;
+config_esp32_t     *config_this = &config_esp32;
 #endif
 #ifdef PLATFORM_ESP32CAM
 tm_esp32cam_t      *tm_this = &esp32cam;
 tc_esp32cam_t      *tc_this = &tc_esp32cam;
 tc_esp32_t         *tc_other = &tc_esp32;
 sts_esp32cam_t     *sts_this = &sts_esp32cam;
-debug_esp32cam_t   *debug_this = &debug_esp32cam;
-eeprom_esp32cam_t  *eeprom_this = &eeprom_esp32cam;
+config_esp32cam_t  *config_this = &config_esp32cam;
 #endif
 
-const char pidName[NUMBER_OF_PID][16] =   { "sts_esp32", "sts_esp32cam", "tm_esp32", "tm_esp32cam", "tm_camera", "tm_gps", "tm_motion", "tm_pressure", "tm_radio", "tm_timer", "tc_esp32", "tc_esp32cam", "debug_esp32", "debug_esp32cam", "eeprom_network", "eeprom_esp32", "eeprom_esp32cam" };
-const char eventName[8][9] =              { "init", "info", "warning", "error", "debug", "cmd", "cmd_resp", "cmd_fail" };
-const char subsystemName[15][14] =        { "esp32", "esp32cam", "ov2640", "neo6mv2", "mpu6050", "bmp280", "radio", "sd", "separation", "timer", "esp32_wifi", "esp32cam_wifi", "fli3d", "ground", "any" };
+const char pidName[NUMBER_OF_PID][13] =   { "sts_esp32", "sts_esp32cam", "tm_esp32", "tm_esp32cam", "tm_camera", "tm_gps", "tm_motion", "tm_pressure", "tm_radio", "tm_timer", "tc_esp32", "tc_esp32cam" };
+const char eventName[7][9] =              { "init", "info", "warning", "error", "cmd", "cmd_resp", "cmd_fail" };
+const char subsystemName[13][14] =        { "esp32", "esp32cam", "ov2640", "neo6mv2", "mpu6050", "bmp280", "radio", "sd", "separation", "timer", "fli3d", "ground", "any" };
 const char modeName[7][10] =              { "init", "checkout", "ready", "thrust", "freefall", "parachute", "static" };
 const char cameraModeName[4][7] =         { "init", "idle", "single", "stream" };
 const char cameraResolutionName[11][10] = { "160x120", "invalid1", "invalid2", "240x176", "320x240", "400x300", "640x480", "800x600", "1024x768", "1280x1024", "1600x1200" };
 const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
-const char commLineName[7][11] =          { "serial", "wifi_udp", "wifi_yamcs", "sd_ccsds", "sd_json", "sd_cam", "radio" };
-const char tcName[9][20] =                { "reboot", "reboot_fli3d", "eeprom_reset", "eeprom_load", "eeprom_save", "get_packet", "set_opsmode", "set_parameter", "set_routing" };
+const char commLineName[10][13] =          { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs_ccsds", "fs_json", "radio" };
+const char tcName[9][20] =                { "reboot", "reboot_fli3d", "config_reset", "config_load", "config_save", "get_packet", "set_opsmode", "set_parameter", "set_routing" };
 const char gpsStatusName[5][10] =         { "none", "est", "time_only", "std", "dgps" }; 
 
-//                                              STS_ESP32 STS_ESP32CAM TM_ESP32 TM_ESP32CAM TM_CAMERA TM_GPS TM_MOTION TM_PRESSURE TM_RADIO TM_TIMER TC_ESP32 TC_ESP32CAM DEBUG_ESP32 DEBUG_ESP32CAM EEPROM_NETWORK EEPROM_ESP32 EEPROM_ESP32CAM
+//                                                  STS_ESP32 STS_ESP32CAM TM_ESP32 TM_ESP32CAM TM_CAMERA TM_GPS TM_MOTION TM_PRESSURE TM_RADIO TM_TIMER TC_ESP32 TC_ESP32CAM 
 
-char routing_all[NUMBER_OF_PID] =              {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1,             1,          1,              1,             1,           1        };
-char routing_none[NUMBER_OF_PID] =             {   0,        0,          0,       0,          0,        0,     0,        0,          0,       0,       0,       0,             0,          0,              0,             0,           0        };
+char routing_all[NUMBER_OF_PID] =                  {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1        };
+char routing_none[NUMBER_OF_PID] =                 {   0,        0,          0,       0,          0,        0,     0,        0,          0,       0,       0,       0        };
 #ifdef PLATFORM_ESP32
-char routing_serial_default[NUMBER_OF_PID] =   {   1,        0,          1,       0,          0,        1,     1,        1,          1,       0,       0,       1,             1,          0,              1,             1,           0        };
-char routing_yamcs_default[NUMBER_OF_PID] =    {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       0,       0,             0,          0,              0,             0,           0        };
-char routing_udp_default[NUMBER_OF_PID] =      {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              0,             0,           0        };
-char routing_serial_debug[NUMBER_OF_PID] =     {   1,        0,          1,       0,          0,        1,     1,        1,          1,       0,       0,       1,             1,          0,              1,             1,           0        };
-char routing_yamcs_debug[NUMBER_OF_PID] =      {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       0,       0,             0,          0,              0,             0,           0        };
-char routing_udp_debug[NUMBER_OF_PID] =        {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              1,             1,           1        };
+char routing_serial_default[NUMBER_OF_PID] =       {   1,        0,          1,       0,          0,        1,     1,        1,          1,       1,       0,       1        };
+char routing_yamcs_default[NUMBER_OF_PID] =        {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       0,       0        };
+char routing_udp_default[NUMBER_OF_PID] =          {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1        };
+char routing_fs_json_default[NUMBER_OF_PID] =      {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1        };
+char routing_fs_ccsds_default[NUMBER_OF_PID] =     {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1        };
+char routing_serial_debug[NUMBER_OF_PID] =         {   1,        0,          1,       0,          0,        1,     1,        1,          1,       1,       0,       1        };
+char routing_yamcs_debug[NUMBER_OF_PID] =          {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       0,       0        };
+char routing_udp_debug[NUMBER_OF_PID] =            {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1        };
+char routing_fs_json_debug[NUMBER_OF_PID] =        {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1        };
+char routing_fs_ccsds_debug[NUMBER_OF_PID] =       {   1,        1,          1,       1,          1,        1,     1,        1,          1,       1,       1,       1        };
 #endif
 #ifdef PLATFORM_ESP32CAM
-char routing_serial_default[NUMBER_OF_PID] =   {   0,        1,          0,       1,          1,        0,     0,        0,          0,       0,       1,       0,             0,          1,              1,             0,           1        };
-char routing_yamcs_default[NUMBER_OF_PID] =    {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       0,       0,             0,          0,              0,             0            0        };
-char routing_udp_default[NUMBER_OF_PID] =      {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              0,             0,           0        };
-char routing_sd_json_default[NUMBER_OF_PID] =  {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              0,             0,           0        };
-char routing_sd_ccsds_default[NUMBER_OF_PID] = {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              0,             0,           0        };
-char routing_serial_debug[NUMBER_OF_PID] =     {   0,        1,          0,       1,          1,        0,     0,        0,          0,       0,       1,       0,             0,          1,              1,             0,           1        };
-char routing_yamcs_debug[NUMBER_OF_PID] =      {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       0,       0,             0,          0,              0,             0            0        };
-char routing_udp_debug[NUMBER_OF_PID] =        {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              0,             0,           0        };
-char routing_sd_json_debug[NUMBER_OF_PID] =    {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              0,             0,           0        };
-char routing_sd_ccsds_debug[NUMBER_OF_PID] =   {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1,             1,          1,              0,             0,           0        };
+char routing_serial_default[NUMBER_OF_PID] =       {   0,        1,          0,       1,          1,        0,     0,        0,          0,       0,       1,       0        };
+char routing_yamcs_default[NUMBER_OF_PID] =        {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       0,       0        };
+char routing_udp_default[NUMBER_OF_PID] =          {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_sd_json_default[NUMBER_OF_PID] =      {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_sd_ccsds_default[NUMBER_OF_PID] =     {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_fs_json_default[NUMBER_OF_PID] =      {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_fs_ccsds_default[NUMBER_OF_PID] =     {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_serial_debug[NUMBER_OF_PID] =         {   0,        1,          0,       1,          1,        0,     0,        0,          0,       0,       1,       0        };
+char routing_yamcs_debug[NUMBER_OF_PID] =          {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       0,       0        };
+char routing_udp_debug[NUMBER_OF_PID] =            {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_sd_json_debug[NUMBER_OF_PID] =        {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_sd_ccsds_debug[NUMBER_OF_PID] =       {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_fs_json_debug[NUMBER_OF_PID] =        {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
+char routing_fs_ccsds_debug[NUMBER_OF_PID] =       {   1,        1,          1,       1,          1,        1,     1,        1,          1,       0,       1,       1        };
 char* routing_sd_json = (char*)&routing_sd_json_default;
 char* routing_sd_ccsds = (char*)&routing_sd_ccsds_default;
 #endif
 char* routing_serial = (char*)&routing_serial_default;
 char* routing_udp = (char*)&routing_udp_default;
 char* routing_yamcs = (char*)&routing_yamcs_default;
+char* routing_fs_json = (char*)&routing_fs_json_default;
+char* routing_fs_ccsds = (char*)&routing_fs_ccsds_default;
 
-// EEPROM FUNCTIONALITY
+// FS FUNCTIONALITY
 
-void eeprom_setup () {
-  EEPROM.begin(sizeof(eeprom_network) + sizeof(*eeprom_this));
-  // initially enable all channels, so that buffering is properly performed; will be soon overwritten by settings on EEPROM 
-  eeprom_this->wifi_enable = true;
-  eeprom_this->wifi_yamcs_enable = true;
-  eeprom_this->wifi_udp_enable = true;
-  eeprom_this->udp_format = ENC_JSON;
-  eeprom_this->serial_format = ENC_JSON;
-  #ifdef PLATFORM_ESP32CAM
-  eeprom_this->sd_enable = true;
-  eeprom_this->sd_json_enable = true;
-  eeprom_this->sd_ccsds_enable = true;
-  #endif
-}
-
-void eeprom_load (uint8_t eeprom_id, uint16_t offset) {
-  byte* struct_ptr;
-  char* ptr;
-  uint8_t struct_sizeof;
-  switch (eeprom_id) {
-    case EEPROM_NETWORK:  struct_ptr = (byte*)&eeprom_network;
-                          struct_sizeof = sizeof(eeprom_network_t);
-                          break;
-    case EEPROM_ESP32:    struct_ptr = (byte*)&eeprom_esp32;
-                          struct_sizeof = sizeof(eeprom_esp32_t);
-                          break;
-    case EEPROM_ESP32CAM: struct_ptr = (byte*)&eeprom_esp32cam;
-                          struct_sizeof = sizeof(eeprom_esp32cam_t);
-                          break;
-  }
-  uint8_t magic = (uint8_t)*struct_ptr;
-  uint8_t version = (uint8_t)*(struct_ptr+1);
-  uint8_t struct_size = (uint8_t)*(struct_ptr+2); 
-  
-  if (EEPROM.read(offset + 0) == magic) {
-    if (EEPROM.read(offset + 1) == version) {
-      if (EEPROM.read(offset + 2) == struct_size and struct_size == struct_sizeof) {
-        for (uint8_t pos = 3; pos < struct_sizeof; pos++) {
-          ptr = (char*)(struct_ptr + pos);
-          *ptr = EEPROM.read (offset + pos);
-        }
-        sprintf (buffer, "Restored %s settings from EEPROM", pidName[eeprom_id]);
-        bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
-      }
-      else {
-        sprintf (buffer, "Size error in data structure for %s settings (size:[mem:%02x,struct:%02x,eeprom:%02x])", pidName[eeprom_id], struct_sizeof, struct_size, EEPROM.read(offset + 2));
-        bus_publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
-        eeprom_reset (eeprom_id, offset);
-      }
-    }
-    else {
-      sprintf (buffer, "Old data structure version detected for %s settings on EEPROM (version:[struct:%02x,eeprom:%02x])", pidName[eeprom_id], version, EEPROM.read(offset + 1));
-      bus_publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
-      eeprom_reset (eeprom_id, offset);
-    }
+bool fs_setup () {
+  if (LITTLEFS.begin(false)) {
+    sprintf (buffer, "Initialized FS (size: %d bytes; free: %d bytes)", LITTLEFS.totalBytes(), LITTLEFS.totalBytes()-LITTLEFS.usedBytes());
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+    return true;
   }
   else {
-    sprintf (buffer, "EEPROM at offset %d does not contain %s settings (magic:[struct:%02x,eeprom:%02x])", offset, pidName[eeprom_id], magic, EEPROM.read(offset + 0));
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
-    eeprom_reset (eeprom_id, offset);
-  }
-}
-
-void eeprom_save (uint8_t eeprom_id, uint16_t offset) {
-  byte* data_struct;
-  uint16_t data_size;
-  switch (eeprom_id) {
-    case EEPROM_NETWORK:  //EEPROM.put (offset, eeprom_network);
-                          data_struct = (byte*)&eeprom_network;
-                          data_size = sizeof (eeprom_network);
-                          break;
-    case EEPROM_ESP32:    //EEPROM.put (offset, eeprom_esp32);
-                          data_struct = (byte*)&eeprom_esp32;
-                          data_size = sizeof (eeprom_esp32);
-                          break;
-    case EEPROM_ESP32CAM: //EEPROM.put (offset, eeprom_esp32cam);
-                          data_struct = (byte*)&eeprom_esp32cam;
-                          data_size = sizeof (eeprom_esp32cam);
-                          break;
-  }
-  for (uint16_t i=0; i < data_size; i++) {
-    EEPROM.write (i+offset, *(data_struct+i)); 
-  }
-  EEPROM.commit();
-  sprintf (buffer, "Saved %s settings to EEPROM at offset %d", pidName[eeprom_id], offset);
-  bus_publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
-}
-
-void eeprom_reset (uint8_t eeprom_id, uint16_t offset) {
-  sprintf (buffer, "Resetting %s EEPROM to default values", pidName[eeprom_id]);
-  bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
-  switch (eeprom_id) {
-    case EEPROM_NETWORK:  strcpy (eeprom_network.wifi_ssid, default_wifi_ssid); 
-                          strcpy (eeprom_network.wifi_password, default_wifi_password);
-                          strcpy (eeprom_network.ap_ssid, default_ap_ssid); 
-                          strcpy (eeprom_network.ap_password, default_ap_password); 
-                          strcpy (eeprom_network.udp_server, default_udp_server);
-                          strcpy (eeprom_network.yamcs_server, default_yamcs_server); 
-                          strcpy (eeprom_network.ntp_server, default_ntp_server);
-                          eeprom_network.udp_port = default_udp_port; 
-                          eeprom_network.yamcs_tm_port = default_yamcs_tm_port; 
-                          eeprom_network.yamcs_tc_port = default_yamcs_tc_port; 
-                          break;
-    case EEPROM_ESP32:    eeprom_esp32.radio_rate = 2;
-                          eeprom_esp32.pressure_rate = 10;
-                          eeprom_esp32.motion_rate = 10;
-                          eeprom_esp32.gps_rate = 10;
-                          eeprom_esp32.radio_enable = true;
-                          eeprom_esp32.pressure_enable = true;
-                          eeprom_esp32.motion_enable = true;
-                          eeprom_esp32.gps_enable = true;
-                          eeprom_esp32.camera_enable = true;
-                          eeprom_esp32.wifi_enable = true;
-                          eeprom_esp32.wifi_udp_enable = true;
-                          eeprom_esp32.wifi_yamcs_enable = true;
-                          eeprom_esp32.radio_debug = false; 
-                          eeprom_esp32.pressure_debug = false; 
-                          eeprom_esp32.motion_debug = false; 
-                          eeprom_esp32.gps_debug = false;
-                          eeprom_esp32.camera_debug = false;  
-                          eeprom_esp32.wifi_debug = false;
-                          eeprom_esp32.timer_debug = true;
-                          eeprom_esp32.esp32_debug = true;
-                          eeprom_esp32.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
-                          eeprom_esp32.udp_format = ENC_JSON;
-                          eeprom_esp32.wifi_sta_enable = true;
-                          eeprom_esp32.wifi_ap_enable = true;
-                          eeprom_esp32.debug_over_serial = false;
-                          break;
-    case EEPROM_ESP32CAM: eeprom_esp32cam.sd_enable = true;
-    	                    eeprom_esp32cam.sd_json_enable = true;
-                          eeprom_esp32cam.sd_ccsds_enable = true;
-                          eeprom_esp32cam.sd_image_enable = true;
-                          eeprom_esp32cam.wifi_enable = true;
-                          eeprom_esp32cam.wifi_udp_enable = true;
-                          eeprom_esp32cam.wifi_yamcs_enable = true;
-                          eeprom_esp32cam.wifi_image_enable = true; 
-                          eeprom_esp32cam.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
-                          eeprom_esp32cam.udp_format = ENC_JSON;
-                          eeprom_esp32cam.esp32cam_debug = true;
-                          eeprom_esp32cam.sd_debug = false;
-                          eeprom_esp32cam.wifi_debug = false;
-                          eeprom_esp32cam.camera_debug = false;
-                          eeprom_esp32cam.timer_debug = false;
-                          eeprom_esp32cam.wifi_ap_enable = true;
-                          eeprom_esp32cam.wifi_sta_enable = true;
-                          eeprom_esp32cam.debug_over_serial = false;
-                          break;
-  } 
-  eeprom_save (eeprom_id, offset); 
-}
-
-void eeprom_print () {
-  for (uint16_t i=0; i < sizeof(eeprom_network) + sizeof(*eeprom_this); i++) {
-    if (i == sizeof(eeprom_network)) {
-      Serial.println ();
+  	if (LITTLEFS.begin(true)) {
+      sprintf (buffer, "Formatted and initialized FS (size: %d bytes; free: %d bytes)", LITTLEFS.totalBytes(), LITTLEFS.totalBytes()-LITTLEFS.usedBytes());
+      bus_publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
+      return true;
     }
-    Serial.print ("[");
-    Serial.print (i,HEX);
-    Serial.print ("|");
-    Serial.print (EEPROM.read(i),HEX);
-    //Serial.print ("|");
-    //Serial.print ((char)EEPROM.read(i));
-    Serial.print ("]");
+    else {
+      bus_publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "Failed to initialize or format FS");
+      return false;
+    }
   }
-  Serial.println ();
 }
+
+bool ftp_setup () {
+  if (tm_this->fs_enabled) {
+    ftpSrv.begin(config_network.ftp_user, config_network.ftp_password);
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, "Initialized FTP server");
+  }
+  else {
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "Failed to initialize FTP server as no file system available");
+  }
+}
+
+void fs_create_today_dir () {
+  char sequencer = 'A';
+  char new_fileName[32];
+  while (LITTLEFS.exists(today_dir)) {
+    sprintf (today_dir, "/%s%s%s%c/", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer++);
+  }
+  LITTLEFS.mkdir(today_dir);
+  sprintf (buffer, "Created storage directory %s", today_dir);
+  bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+  // move all data files to today's subdirectory
+/*  uint8_t i;
+  File dir = LITTLEFS.open("/");
+  File file = dir.openNextFile();
+  while (file){
+    if (!file.isDirectory()){
+      if (!strcmp(file.name(), "config.txt")) {
+        sprintf (new_fileName, "%s%s", today_dir, file.name());
+        LITTLEFS.rename(file.name(), new_fileName);
+        i++;
+      }
+    }  
+    file = dir.openNextFile();
+  }
+  sprintf (buffer, "Moved %d data files from root to %s", i, today_dir);
+  bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);  */
+}
+
+uint32_t fs_free () {
+  if (config_this->fs_enable) {
+  	if (LITTLEFS.totalBytes()-LITTLEFS.usedBytes() == 0) {
+  	  config_this->fs_enable = false;
+  	  tm_this->fs_enabled = false;
+  	  sprintf (buffer, "Disabling further access to FS because it is full");
+      bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+  	}
+  	else {
+      return (LITTLEFS.totalBytes()-LITTLEFS.usedBytes());
+    }
+  }
+  else { 
+  	return (0);
+  }
+}
+
+void load_default_config () {
+  strcpy (config_network.wifi_ssid, default_wifi_ssid); 
+  strcpy (config_network.wifi_password, default_wifi_password);
+  strcpy (config_network.ap_ssid, default_ap_ssid); 
+  strcpy (config_network.ap_password, default_ap_password); 
+  strcpy (config_network.ftp_user, default_ftp_user); 
+  strcpy (config_network.ftp_password, default_ftp_password); 
+  strcpy (config_network.udp_server, default_udp_server);
+  strcpy (config_network.yamcs_server, default_yamcs_server); 
+  strcpy (config_network.ntp_server, default_ntp_server);
+  config_network.udp_port = default_udp_port; 
+  config_network.yamcs_tm_port = default_yamcs_tm_port; 
+  config_network.yamcs_tc_port = default_yamcs_tc_port; 
+  config_esp32.radio_rate = 1;
+  config_esp32.pressure_rate = 1;
+  config_esp32.motion_rate = 1;
+  config_esp32.gps_rate = 1;
+  config_esp32.radio_enable = false;
+  config_esp32.pressure_enable = false;
+  config_esp32.motion_enable = false;
+  config_esp32.gps_enable = false;
+  config_esp32.camera_enable = false;
+  config_esp32.wifi_enable = true;
+  config_esp32.wifi_sta_enable = true;
+  config_esp32.wifi_ap_enable = true;
+  config_esp32.wifi_udp_enable = true;
+  config_esp32.wifi_yamcs_enable = true;
+  config_esp32.fs_enable = true;
+  config_esp32.fs_json_enable = true;
+  config_esp32.fs_ccsds_enable = false;
+  config_esp32.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
+  config_esp32.udp_format = ENC_JSON;
+  config_esp32.yamcs_protocol = PROTO_UDP; // TODO: test PROTO_TCP
+  config_esp32.debug_over_serial = true;
+  config_esp32.ota_enable = false;
+  config_esp32cam.wifi_enable = true;
+  config_esp32cam.wifi_ap_enable = true;
+  config_esp32cam.wifi_sta_enable = true;
+  config_esp32cam.wifi_udp_enable = true;
+  config_esp32cam.wifi_yamcs_enable = true;
+  config_esp32cam.wifi_image_enable = true; 
+  config_esp32cam.fs_enable = true;
+  config_esp32cam.fs_json_enable = true;
+  config_esp32cam.fs_ccsds_enable = true;
+  config_esp32cam.sd_enable = true;
+  config_esp32cam.sd_json_enable = true;
+  config_esp32cam.sd_ccsds_enable = true;
+  config_esp32cam.sd_image_enable = true;
+  config_esp32cam.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
+  config_esp32cam.udp_format = ENC_JSON;
+  config_esp32cam.yamcs_protocol = PROTO_UDP; // TODO: test TCP
+  config_esp32cam.debug_over_serial = false;
+}
+
+bool fs_load_config() {
+  char linebuffer[80];
+  File file = LITTLEFS.open ("/config.txt");
+  if (!file) {
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "Failed to open configuration file 'config.txt' from FS");
+    return false;
+  }
+  uint8_t i = 0; 
+  while (file.available ()) {
+    linebuffer[i] = file.read();
+    if (linebuffer[i] != '\r') { // ignore \r
+      if (linebuffer[i] == '\n') { // full line read
+        linebuffer[i] = 0; // mark end of c string
+        if (String(linebuffer).startsWith("wifi_ssid")) {
+          strcpy (config_network.wifi_ssid, String(linebuffer).substring(5).c_str());
+        }
+        if (String(linebuffer).startsWith("wifi_password")) {
+          strcpy (config_network.wifi_password, String(linebuffer).substring(9).c_str());
+        }
+        if (String(linebuffer).startsWith("ap_ssid")) {
+          strcpy (config_network.ap_ssid, String(linebuffer).substring(8).c_str());
+        }
+        if (String(linebuffer).startsWith("ap_password")) {
+          strcpy (config_network.ap_password, String(linebuffer).substring(12).c_str());
+        }
+        if (String(linebuffer).startsWith("ftp_user")) {
+          strcpy (config_network.ftp_user, String(linebuffer).substring(8).c_str());
+        }
+        if (String(linebuffer).startsWith("ftp_password")) {
+          strcpy (config_network.ftp_password, String(linebuffer).substring(12).c_str());
+        }
+         if (String(linebuffer).startsWith("udp_server")) {
+          strcpy (config_network.udp_server, String(linebuffer).substring(11).c_str());
+        }
+        if (String(linebuffer).startsWith("yamcs_server")) {
+          strcpy (config_network.yamcs_server, String(linebuffer).substring(11).c_str());
+        }
+        if (String(linebuffer).startsWith("ntp_server")) {
+          strcpy (config_network.ntp_server, String(linebuffer).substring(11).c_str());
+        }
+        if (String(linebuffer).startsWith("udp_port")) {
+          config_network.udp_port = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("yamcs_tm_port")) {
+          config_network.yamcs_tm_port = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("yamcs_tc_port")) {
+          config_network.yamcs_tc_port = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("radio_rate")) {
+          config_this->radio_rate = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("pressure_rate")) {
+          config_this->pressure_rate = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("motion_rate")) {
+          config_this->motion_rate = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("gps_rate")) {
+          config_this->gps_rate = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("wifi_enable")) {
+          config_this->wifi_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("wifi_sta_enable")) {
+          config_this->wifi_sta_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("wifi_ap_enable")) {
+          config_this->wifi_ap_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("wifi_udp_enable")) {
+          config_this->wifi_udp_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("wifi_yamcs_enable")) {
+          config_this->wifi_yamcs_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("fs_enable")) {
+          config_this->fs_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("fs_json_enable")) {
+          config_this->fs_json_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("fs_ccsds_enable")) {
+          config_this->fs_ccsds_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("radio_enable")) {
+          config_this->radio_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("pressure_enable")) {
+          config_this->pressure_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("motion_enable")) {
+          config_this->motion_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("gps_enable")) {
+          config_this->gps_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("camera_enable")) {
+          config_this->camera_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("serial_format")) {
+          config_this->serial_format = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("udp_format")) {
+          config_this->udp_format = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("yamcs_protocol")) {
+          config_this->yamcs_protocol = String(linebuffer).substring(9).toInt();
+        }        
+        if (String(linebuffer).startsWith("debug_over_serial")) {
+          config_this->debug_over_serial = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("ota_enable")) {
+          config_this->ota_enable = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("timer_debug")) {
+          config_this->timer_debug = String(linebuffer).substring(9).toInt();
+        }
+        if (String(linebuffer).startsWith("mpu6050_accel_offset_x_sensor")) {
+          mpu6050.a_z_rocket_offset = String(linebuffer).substring(9).toInt();
+        } 
+        if (String(linebuffer).startsWith("mpu6050_accel_offset_y_sensor")) {
+          mpu6050.a_x_rocket_offset = String(linebuffer).substring(9).toInt();
+        } 
+        if (String(linebuffer).startsWith("mpu6050_accel_offset_z_sensor")) {
+          mpu6050.a_y_rocket_offset = String(linebuffer).substring(9).toInt();
+        }        
+        i = 0;
+      }
+      else {
+        i++;
+      }
+    }
+  }
+  file.close();
+  bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, "Read settings from FS configuration file");
+  return true;
+}
+
+// WIFI FUNCTIONALITY
 
 bool wifi_setup () {
   WiFi.mode(WIFI_AP_STA); 
-  if (eeprom_this->wifi_ap_enable) {
-    WiFi.softAP(eeprom_network.ap_ssid, eeprom_network.ap_password);
-    sprintf (buffer, "Started WiFi access point %s with IP %s", eeprom_network.ap_ssid, WiFi.softAPIP().toString().c_str());
-    bus_publish_event (STS_THIS, SS_THIS_WIFI, EVENT_INIT, buffer);
+  if (config_this->wifi_ap_enable) {
+    WiFi.softAP(config_network.ap_ssid, config_network.ap_password);
+    sprintf (buffer, "Started WiFi access point %s with IP %s", config_network.ap_ssid, WiFi.softAPIP().toString().c_str());
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
   }
-  if (eeprom_this->wifi_sta_enable) {
-    WiFi.begin(eeprom_network.wifi_ssid, eeprom_network.wifi_password);  
+  if (config_this->wifi_sta_enable) {
+    WiFi.begin(config_network.wifi_ssid, config_network.wifi_password);  
     uint8_t i = 0;
     while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
-      delay (500);
+      delay (1000);
     } 
     if (i >= WIFI_TIMEOUT) {
-      sprintf (buffer, "Failed to connect %s to %s WiFi", subsystemName[SS_THIS], eeprom_network.wifi_ssid);
-      bus_publish_event (STS_THIS, SS_THIS_WIFI, EVENT_ERROR, buffer);
+      sprintf (buffer, "Tired of waiting for connection of %s to %s WiFi, continuing in background", subsystemName[SS_THIS], config_network.wifi_ssid);
+      bus_publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
       return false;
     }
     else {
-      sprintf (buffer, "%s WiFi connected to %s with IP %s", subsystemName[SS_THIS], eeprom_network.wifi_ssid, WiFi.localIP().toString().c_str());
-      bus_publish_event (STS_THIS, SS_THIS_WIFI, EVENT_INIT, buffer);
-      if (eeprom_this->wifi_udp_enable) {
+      sprintf (buffer, "%s WiFi connected to %s with IP %s", subsystemName[SS_THIS], config_network.wifi_ssid, WiFi.localIP().toString().c_str());
+      bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+      if (config_this->wifi_udp_enable) {
         tm_this->wifi_udp_enabled = true;
       }
-      if (eeprom_this->wifi_yamcs_enable) {
+      if (config_this->wifi_yamcs_enable) {
         tm_this->wifi_yamcs_enabled = true;
       }
       tm_this->wifi_connected = true;
       timeClient.begin();
-      uint8_t j = 0;
-      while (j++ < NTP_TIMEOUT and !timeClient.update()) {
-        delay (500);
-      }
-      if (j >= NTP_TIMEOUT) {      
-        sprintf (buffer, "Failed to connect %s to NTP server %s; continuing in background", subsystemName[SS_THIS], eeprom_network.ntp_server);
-        bus_publish_event (STS_THIS, SS_THIS_WIFI, EVENT_WARNING, buffer);      
-      }
-      else {
-        sprintf (buffer, "Time on %s set via NTP server %s: %s", subsystemName[SS_THIS], eeprom_network.ntp_server, timeClient.getFormattedDate().c_str());
-        bus_publish_event (STS_THIS, SS_THIS_WIFI, EVENT_INIT, buffer);
-      }
+      time_check();
       return true;
     }
   }
 }
 
-// TM/TC FUNCTIONALITY (serial/udp/yamcs)
+void wifi_check () {
+  if (WiFi.status() != WL_CONNECTED) {
+    if (tm_this->wifi_connected) {
+      tm_this->wifi_connected = false;
+      tm_this->warn_wifi_connloss = true;
+    }
+  }
+  else {
+    if (!tm_this->wifi_connected) {
+      tm_this->wifi_connected = true;
+    }
+  }
+}
+
+void time_check () {
+  if (!tm_this->time_current and timeClient.update()) {
+    sprintf (buffer, "Time on %s set via NTP server %s: %s", subsystemName[SS_THIS], config_network.ntp_server, timeClient.getFormattedDate().c_str());
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+    tm_this->time_current = true;
+    fs_create_today_dir ();
+  }   
+}
+
+// TM/TC FUNCTIONALITY (serial/udp/yamcs/fs/sd)
 
 void bus_publish_pkt (uint8_t PID) {
   static uint16_t ccsds_len, packet_len;
@@ -382,27 +509,7 @@ void bus_publish_pkt (uint8_t PID) {
     case TC_ESP32CAM:    packet_len = tc_esp32cam.json_size + 1;
                          packet_ptr = (byte*)&tc_esp32cam;
                          packet_type = PKT_TC;
-                         break;                         
-    case DEBUG_ESP32:    packet_len = debug_esp32.message_size + 5;
-                         packet_ptr = (byte*)&debug_esp32;
-                         packet_type = PKT_TM;
-                         break;
-    case DEBUG_ESP32CAM: packet_len = debug_esp32cam.message_size + 5;
-                         packet_ptr = (byte*)&debug_esp32cam;
-                         packet_type = PKT_TM;
-                         break; 
-    case EEPROM_NETWORK: packet_len = sizeof(eeprom_network_t);
-                         packet_ptr = (byte*)&eeprom_network;
-                         packet_type = PKT_TM;
-                         break;
-    case EEPROM_ESP32:   packet_len = sizeof(eeprom_esp32_t);
-                         packet_ptr = (byte*)&eeprom_esp32;
-                         packet_type = PKT_TM;
-                         break;  
-    case EEPROM_ESP32CAM:packet_len = sizeof(eeprom_esp32cam_t);
-                         packet_ptr = (byte*)&eeprom_esp32cam;
-                         packet_type = PKT_TM;
-                         break;                                                                                                                              
+                         break;                                                                                                                            
   }
   update_pkt (PID); 
   buildJsonString (PID); // fills buffer
@@ -411,34 +518,48 @@ void bus_publish_pkt (uint8_t PID) {
   update_ccsds_hdr (PID, packet_type, packet_len);
   memcpy (&ccsds_buffer.ccsds_hdr, &ccsds_hdr, sizeof (ccsds_hdr_t));
   memcpy (&ccsds_buffer.blob, packet_ptr, packet_len);
-  // SERIAL
+  // serial
   if (routing_serial[PID]) {
-    switch (eeprom_this->serial_format) {
+    switch (config_this->serial_format) {
       case ENC_JSON:  serial_publish ((char*)&bus_buffer, strlen (bus_buffer)); break;
       case ENC_CCSDS: serial_publish ((char*)&ccsds_buffer, ccsds_len); break;
     }
   }
   // UDP
-  if (routing_udp[PID] and eeprom_this->wifi_enable and eeprom_this->wifi_udp_enable) {
-    switch (eeprom_this->udp_format) {
+  if (routing_udp[PID] and config_this->wifi_enable and config_this->wifi_udp_enable) {
+    switch (config_this->udp_format) {
       case ENC_JSON:  udp_publish ((char*)&bus_buffer, strlen (bus_buffer)); break;
       case ENC_CCSDS: udp_publish ((char*)&ccsds_buffer, ccsds_len); break;
     }
   }
   // Yamcs
-  if (routing_yamcs[PID] and eeprom_this->wifi_enable and eeprom_this->wifi_yamcs_enable) {
-    yamcs_publish ((char*)&ccsds_buffer, ccsds_len);
+  if (routing_yamcs[PID] and config_this->wifi_enable and config_this->wifi_yamcs_enable) {
+  	if (config_this->yamcs_protocol == PROTO_UDP) {
+      yamcs_publish_udp ((char*)&ccsds_buffer, ccsds_len);
+    }
+    else {
+      yamcs_publish_tcp ((char*)&ccsds_buffer, ccsds_len);
+    }
   }
+  // radio
   #ifdef PLATFORM_ESP32
   if (tm_this->radio_enabled and PID == TM_RADIO) {
     radio_publish ();
   }
   #endif
+  // FS
+  if (routing_fs_json[PID] and config_this->fs_enable and config_this->fs_json_enable) {
+    fs_json_publish (bus_buffer);
+  }
+  if (routing_fs_ccsds[PID] and config_this->fs_enable and config_this->fs_ccsds_enable) {
+    fs_ccsds_publish ((char*)&ccsds_buffer, ccsds_len);
+  }
+  // SD-card
   #ifdef PLATFORM_ESP32CAM
-  if (routing_sd_json[PID] and eeprom_this->sd_enable and eeprom_this->sd_json_enable) {
+  if (routing_sd_json[PID] and config_this->sd_enable and config_this->sd_json_enable) {
     sd_json_publish (bus_buffer);
   }
-  if (routing_sd_ccsds[PID] and eeprom_this->sd_enable and eeprom_this->sd_ccsds_enable) {
+  if (routing_sd_ccsds[PID] and config_this->sd_enable and config_this->sd_ccsds_enable) {
     sd_ccsds_publish ((char*)&ccsds_buffer, ccsds_len);
   }
   #endif
@@ -470,12 +591,6 @@ void bus_publish_event (uint8_t PID, uint8_t subsystem, uint8_t event_type, cons
     case TC_ESP32CAM:    tc_esp32cam.cmd = subsystem;
                          strcpy (tc_esp32cam.json, event_message); 
                          tc_esp32cam.json_size = strlen(event_message);
-                         break;
-    case DEBUG_ESP32:    strcpy (debug_esp32.message, event_message);
-                         debug_esp32.message_size = strlen (event_message) + 1;
-                         break;
-    case DEBUG_ESP32CAM: strcpy (debug_esp32cam.message, event_message);
-                         debug_esp32cam.message_size = strlen (event_message) + 1;
                          break;
   }
   bus_publish_pkt (PID);
@@ -527,7 +642,7 @@ bool udp_publish (char* packet_ptr, uint16_t packet_len) {
   if (tm_this->wifi_connected) {
     while (linkedlist_udp.size() and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
       linkedlist_udp_entry = linkedlist_udp.remove(0);
-      wifiUDP.beginPacket(eeprom_network.udp_server, eeprom_network.udp_port);
+      wifiUDP.beginPacket(config_network.udp_server, config_network.udp_port);
       wifiUDP.write ((const uint8_t*)linkedlist_udp_entry->blob, linkedlist_udp_entry->blob_size);
       wifiUDP.println ();
       wifiUDP.endPacket();
@@ -539,7 +654,7 @@ bool udp_publish (char* packet_ptr, uint16_t packet_len) {
   return true;
 }
   
-bool yamcs_publish (char* packet_ptr, uint16_t packet_len) { 
+bool yamcs_publish_udp (char* packet_ptr, uint16_t packet_len) { 
   static ccsds_t* linkedlist_yamcs_entry;
   uint8_t batch_count = 0;
   linkedlist_yamcs_entry = (ccsds_t*)malloc(sizeof(ccsds_t));
@@ -555,7 +670,7 @@ bool yamcs_publish (char* packet_ptr, uint16_t packet_len) {
   if (tm_this->wifi_connected) {
     while (linkedlist_yamcs.size() and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
       linkedlist_yamcs_entry = linkedlist_yamcs.remove(0);
-      wifiUDP.beginPacket(eeprom_network.yamcs_server, eeprom_network.yamcs_tm_port);
+      wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
       wifiUDP.write ((const uint8_t*)&linkedlist_yamcs_entry->blob, linkedlist_yamcs_entry->blob_size);
       wifiUDP.endPacket();
       free (linkedlist_yamcs_entry);
@@ -563,6 +678,103 @@ bool yamcs_publish (char* packet_ptr, uint16_t packet_len) {
     } 
   }
   tm_this->yamcs_buffer = linkedlist_yamcs.size();
+  return true;  
+}
+
+bool yamcs_publish_tcp (char* packet_ptr, uint16_t packet_len) { 
+  static ccsds_t* linkedlist_yamcs_entry;
+  uint8_t batch_count = 0;
+  linkedlist_yamcs_entry = (ccsds_t*)malloc(sizeof(ccsds_t));
+  if (linkedlist_yamcs_entry == NULL or (tm_this->mem_free < MIN_MEM_FREE and linkedlist_yamcs.size() > 10)) { 
+    tm_this->wifi_connected = true; 
+    tm_this->err_yamcs_dataloss = true;
+  }
+  else {
+    memcpy (linkedlist_yamcs_entry->blob, packet_ptr, packet_len);
+    linkedlist_yamcs_entry->blob_size = packet_len;
+    linkedlist_yamcs.add(linkedlist_yamcs_entry);
+  }
+  if (tm_this->wifi_connected) {
+    while (linkedlist_yamcs.size() and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
+      linkedlist_yamcs_entry = linkedlist_yamcs.remove(0);
+      if (!wifiTCP.connect(config_network.yamcs_server, config_network.yamcs_tm_port)) {
+        tm_this->err_yamcs_dataloss = true;
+      	return false;
+      }
+      wifiTCP.write ((const uint8_t*)&linkedlist_yamcs_entry->blob, linkedlist_yamcs_entry->blob_size);
+      free (linkedlist_yamcs_entry);
+      tm_this->yamcs_rate++;
+    } 
+  }
+  tm_this->yamcs_buffer = linkedlist_yamcs.size();
+  return true;  
+}
+
+bool fs_json_publish (char* message) {
+  char path[30];
+  uint8_t batch_count = 0;
+  if (!linkedlist_fs_json.add(String(message)) or (tm_this->mem_free < MIN_MEM_FREE and linkedlist_fs_json.size() > 10)) {
+    tm_this->fs_enabled = true; 
+    tm_this->err_fs_dataloss = true;
+  }
+  if (tm_this->fs_enabled) {
+    sprintf (path, "%s/json.log", today_dir);
+    File logfile_json = LITTLEFS.open(path, FILE_APPEND);
+    if (!logfile_json) {
+      bus_publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "Failed to open JSON logfile on FS in append mode");
+      tm_this->fs_json_enabled = false;
+      return false;
+    }
+    else {
+      tm_this->fs_json_enabled = true;
+      tm_this->fs_current = true;
+      while (linkedlist_fs_json.size() and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
+        logfile_json.println (linkedlist_fs_json.remove(0));
+        tm_this->fs_json_rate++;
+      }
+      logfile_json.close();
+    }
+  }
+  tm_this->fs_ccsds_buffer = linkedlist_fs_json.size();
+  return true;  
+}
+
+bool fs_ccsds_publish (char* packet_ptr, uint16_t packet_len) {
+  char path[30];
+  static ccsds_t* linkedlist_fs_ccsds_entry;
+  uint8_t batch_count = 0;
+  linkedlist_fs_ccsds_entry = (ccsds_t*)malloc(sizeof(ccsds_t));
+  if (linkedlist_fs_ccsds_entry == NULL or (tm_this->mem_free < MIN_MEM_FREE and linkedlist_fs_ccsds.size() > 10)) { 
+    tm_this->fs_enabled = true;
+    tm_this->err_fs_dataloss = true;
+  }
+  else {
+    memcpy (linkedlist_fs_ccsds_entry->blob, packet_ptr, packet_len);
+    linkedlist_fs_ccsds_entry->blob_size = packet_len;
+    linkedlist_fs_ccsds.add(linkedlist_fs_ccsds_entry);
+  }
+  if (tm_this->fs_enabled) {
+    sprintf (path, "%s/APID_%d.raw", today_dir, linkedlist_fs_ccsds_entry[1]);
+    File logfile_ccsds = LITTLEFS.open(path, FILE_APPEND);
+    if (!logfile_ccsds) {
+      bus_publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "Failed to open CCSDS logfile on FS in append mode");
+      tm_this->fs_ccsds_enabled = false;
+      return false;
+    }
+    else {
+      tm_this->fs_ccsds_enabled = true;
+      tm_this->fs_current = true;
+      while (linkedlist_fs_ccsds.size() and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
+        linkedlist_fs_ccsds_entry = linkedlist_fs_ccsds.remove(0);
+        logfile_ccsds.write ((const uint8_t*)linkedlist_fs_ccsds_entry->blob, linkedlist_fs_ccsds_entry->blob_size);
+        logfile_ccsds.println ();
+        free (linkedlist_fs_ccsds_entry);
+        tm_this->fs_ccsds_rate++;
+      }
+      logfile_ccsds.close();
+    }
+  }
+  tm_this->fs_ccsds_buffer = linkedlist_fs_ccsds.size();
   return true;  
 }
 
@@ -575,7 +787,7 @@ bool sd_json_publish (char* message) {
     tm_this->err_sd_dataloss = true;
   }
   if (esp32cam.sd_enabled) {
-    sprintf (path, "%s/json.log", sd_dir);
+    sprintf (path, "%s/json.log", today_dir);
     File logfile_json = SD_MMC.open(path, FILE_APPEND);
     if (!logfile_json) {
       bus_publish_event (STS_ESP32CAM, SS_SD, EVENT_ERROR, "Failed to open JSON logfile in append mode");
@@ -611,7 +823,7 @@ bool sd_ccsds_publish (char* packet_ptr, uint16_t packet_len) {
     linkedlist_sd_ccsds.add(linkedlist_sd_ccsds_entry);
   }
   if (esp32cam.sd_enabled) {
-    sprintf (path, "%s/ccsds.log", sd_dir);
+    sprintf (path, "%s/ccsds.log", today_dir);
     File logfile_ccsds = SD_MMC.open(path, FILE_APPEND);
     if (!logfile_ccsds) {
       bus_publish_event (STS_ESP32CAM, SS_SD, EVENT_ERROR, "Failed to open CCSDS logfile in append mode");
@@ -653,13 +865,6 @@ void update_ccsds_hdr (uint16_t PID, bool pkt_type, uint16_t pkt_len) {
   ccsds_hdr.seq_ctr_L = (uint8_t)ccsds_ctr[PID];
   ccsds_hdr.pkt_len_H = (uint8_t)((pkt_len - 1) >> 8);
   ccsds_hdr.pkt_len_L = (uint8_t)(pkt_len - 1);
-/*  if (PID == 2) {
-    Serial.print (pkt_len);
-    Serial.print (":");
-    Serial.print (ccsds_hdr.pkt_len_H, HEX);
-    Serial.print (":");
-    Serial.println (ccsds_hdr.pkt_len_L, HEX);
-  } */
 } 
 
 void buildJsonString (uint8_t PID) {
@@ -669,14 +874,14 @@ void buildJsonString (uint8_t PID) {
                          break;
     case STS_ESP32CAM:   sprintf (buffer, "{\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", sts_esp32cam.packet_ctr, eventName[sts_esp32cam.type], subsystemName[sts_esp32cam.subsystem], sts_esp32cam.message);
                          break;                  
-    case TM_ESP32:       sprintf (buffer, "{\"ctr\":%u,\"opsmode\":\"%s\",\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"press_rate\":%u,\"motion_rate\":%u,\"cam_rate\":%u,\"gps_rate\":%u,\"radio_rate\":%u,\"sep_sts\":%d,\"enabled\":\"%d%d%d%d%d%d%d%d\",\"current\":\"%d%d%d%d%d\",\"conn\":\"%d%d\"}", 
-                                  esp32.packet_ctr, modeName[esp32.opsmode], esp32.error_ctr, esp32.warning_ctr, esp32.mem_free, esp32.pressure_rate, esp32.motion_rate, esp32.camera_rate, esp32.gps_rate, esp32.radio_rate, esp32.separation_sts,
+    case TM_ESP32:       sprintf (buffer, "{\"ctr\":%u,\"opsmode\":\"%s\",\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"fs_free\":%u,\"press_rate\":%u,\"motion_rate\":%u,\"cam_rate\":%u,\"gps_rate\":%u,\"radio_rate\":%u,\"sep_sts\":%d,\"enabled\":\"%d%d%d%d%d%d%d%d\",\"current\":\"%d%d%d%d%d\",\"conn\":\"%d%d\"}", 
+                                  esp32.packet_ctr, modeName[esp32.opsmode], esp32.error_ctr, esp32.warning_ctr, esp32.mem_free, esp32.fs_free, esp32.pressure_rate, esp32.motion_rate, esp32.camera_rate, esp32.gps_rate, esp32.radio_rate, esp32.separation_sts,
                                   esp32.radio_enabled, esp32.pressure_enabled, esp32.motion_enabled, esp32.gps_enabled, esp32.camera_enabled, esp32.wifi_enabled, esp32.wifi_udp_enabled, esp32.wifi_yamcs_enabled, 
                                   esp32.radio_current, esp32.pressure_current, esp32.motion_current, esp32.gps_current, esp32.camera_current,
                                   esp32.serial_connected, esp32.wifi_connected); 
                          break;
-    case TM_ESP32CAM:    sprintf (buffer, "{\"ctr\":%u,\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"sd_free\":%u,\"img_rate\":%u,\"enabled\":\"%d%d%d%d%d%d%d%d%d\",\"current\":\"%d%d\",\"connected\":\"%d%d\"}",
-                                  esp32cam.packet_ctr, esp32cam.error_ctr, esp32cam.warning_ctr, esp32cam.mem_free, esp32cam.sd_free, esp32cam.camera_image_rate, 
+    case TM_ESP32CAM:    sprintf (buffer, "{\"ctr\":%u,\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"fs_free\":%u,\"sd_free\":%u,\"img_rate\":%u,\"enabled\":\"%d%d%d%d%d%d%d%d%d\",\"current\":\"%d%d\",\"connected\":\"%d%d\"}",
+                                  esp32cam.packet_ctr, esp32cam.error_ctr, esp32cam.warning_ctr, esp32cam.mem_free, esp32cam.fs_free, esp32cam.sd_free, esp32cam.camera_image_rate, 
                                   esp32cam.wifi_enabled, esp32cam.wifi_udp_enabled, esp32cam.wifi_yamcs_enabled, esp32cam.wifi_image_enabled, esp32cam.camera_enabled, esp32cam.sd_enabled, esp32cam.sd_image_enabled, esp32cam.sd_json_enabled, esp32cam.sd_ccsds_enabled,  
                                   esp32cam.sd_current, esp32cam.camera_current,
                                   esp32cam.serial_connected, esp32cam.wifi_connected);
@@ -715,8 +920,8 @@ void buildJsonString (uint8_t PID) {
     case TM_RADIO:       tohex ((unsigned char*)&radio, sizeof(tm_radio_t), (char*)&radio_buffer, 2*sizeof(tm_radio_t)+2); 
                          sprintf (buffer, "{\"ctr\":%u,\"data\":\"%s\"}", radio.packet_ctr, radio_buffer);
                          break;
-    case TM_TIMER:       sprintf (buffer, "{\"ctr\":%u,\"loop_ms\":%u,\"radio\":%d,\"radio_ms\":%u,\"pressure\":%d,\"pressure_ms\":%u,\"motion\":%d,\"motion_ms\":%u,\"gps\":%d,\"gps_ms\":%u,\"esp32cam_ms\":%u}", 
-                                  timer.packet_ctr, timer.loop_duration, timer.do_radio, timer.radio_duration, timer.do_pressure, timer.pressure_duration, timer.do_motion, timer.motion_duration, timer.do_gps, timer.gps_duration, timer.esp32cam_duration);
+    case TM_TIMER:       sprintf (buffer, "{\"ctr\":%u,\"rate\":%u,\"radio\":%u,\"pressure\":%u,\"motion\":%u,\"gps\":%u,\"esp32cam\":%u}", 
+                                  timer.packet_ctr, timer.timer_rate, timer.radio_duration, timer.pressure_duration, timer.motion_duration, timer.gps_duration, timer.esp32cam_duration);
                          break;
     case TC_ESP32:       if (tc_esp32.json_size) {
                            sprintf (buffer, "{\"cmd\":\"%s\",%s", tcName[tc_esp32.cmd], (char*)(&tc_esp32.json+1));
@@ -731,11 +936,7 @@ void buildJsonString (uint8_t PID) {
                          else {
                            sprintf (buffer, "{\"cmd\":\"%s\"}", tcName[tc_esp32cam.cmd]); 
                          }
-                         break;                    
-    case DEBUG_ESP32:    sprintf (buffer, "{\"ctr\":%u,\"msg\":\"%s\"}", debug_esp32.packet_ctr, debug_esp32.message);
-                         break;
-    case DEBUG_ESP32CAM: sprintf (buffer, "{\"ctr\":%u,\"msg\":\"%s\"}", debug_esp32cam.packet_ctr, debug_esp32cam.message);
-                         break;    
+                         break;  
   }
 }
 
@@ -748,6 +949,7 @@ void update_pkt (uint8_t PID) {
     case TM_ESP32:       esp32.millis = millis();
                          esp32.packet_ctr++; 
                          esp32.mem_free = ESP.getFreeHeap();
+                         esp32.fs_free = fs_free ();
                          if (esp32.serial_connected) {
                            esp32.serial_out_rate++;
                          }
@@ -798,9 +1000,6 @@ void update_pkt (uint8_t PID) {
                          break;
     case TC_ESP32CAM:    // do nothing
                          break;
-    case DEBUG_ESP32:    debug_esp32.millis = millis ();
-                         debug_esp32.packet_ctr++;
-                         break;
     #endif
     #ifdef PLATFORM_ESP32CAM
     case STS_ESP32CAM:   sts_esp32cam.millis = millis();
@@ -824,9 +1023,6 @@ void update_pkt (uint8_t PID) {
                          break;        
     case TC_ESP32:       // do nothing
                          break;
-    case DEBUG_ESP32CAM: debug_esp32cam.millis = millis ();
-                         debug_esp32cam.packet_ctr++;
-                         break;
     #endif
   }
 }
@@ -841,11 +1037,13 @@ void reset_pkt (uint8_t PID) {
                          esp32.motion_rate = 0;
                          esp32.gps_rate = 0;
                          esp32.camera_rate = 0;
-                         esp32.timer_rate = 0;
                          esp32.udp_rate = 0;
                          esp32.yamcs_rate = 0;
                          esp32.serial_out_rate = 0;    
                          esp32.serial_in_rate = 0;  
+                         esp32.fs_json_rate = 0;
+                         esp32.fs_ccsds_rate = 0;
+                         esp32.fs_ftp_enabled = false;
                          esp32.warn_serial_connloss = false;
                          esp32.warn_wifi_connloss = false;
                          esp32.err_serial_dataloss = false;
@@ -874,10 +1072,18 @@ void reset_pkt (uint8_t PID) {
                          esp32.radio_rate++;
                          esp32.radio_current = true;
                          break;
-    case TM_TIMER:       break;
-    case TC_ESP32CAM:    tc_esp32cam.json_size = 0;
+    case TM_TIMER:       timer.timer_rate = 0;
+    	                 timer.radio_duration = 0;
+                         timer.pressure_duration = 0;
+                         timer.motion_duration = 0;
+                         timer.gps_duration = 0;
+                         timer.esp32cam_duration = 0;
+                         timer.serial_duration = 0;
+                         timer.ota_duration = 0;
+                         timer.ftp_duration = 0;
+                         timer.wifi_duration = 0;
                          break;
-    case DEBUG_ESP32:    debug_esp32.message_size = 0;
+    case TC_ESP32CAM:    tc_esp32cam.json_size = 0;
                          break;
     #endif
     #ifdef PLATFORM_ESP32CAM
@@ -888,6 +1094,9 @@ void reset_pkt (uint8_t PID) {
                          esp32cam.yamcs_rate = 0;
                          esp32cam.serial_in_rate = 0;
                          esp32cam.serial_out_rate = 0;
+                         esp32cam.fs_json_rate = 0;
+                         esp32cam.fs_ccsds_rate = 0;
+                         esp32cam.fs_ftp_enabled = false;
                          esp32cam.camera_image_rate = 0;
                          esp32cam.sd_current = false;
                          esp32cam.camera_current = false;
@@ -901,8 +1110,6 @@ void reset_pkt (uint8_t PID) {
                          esp32.camera_current = true;
                          radio.camera_current = true;                            
     case TC_ESP32:       tc_esp32.json_size = 0;
-                         break;
-    case DEBUG_ESP32CAM: debug_esp32cam.message_size = 0;
                          break;
     #endif
   }
@@ -928,6 +1135,8 @@ void radio_publish () {
   }
 }
 
+// SERIAL FUNCTIONALITY
+
 uint16_t serial_check () {
   // gets characters from Serial, puts them in serial_buffer, and returns length of string that is ready for processing or false if string is not complete
   static uint8_t serial_status;
@@ -935,7 +1144,7 @@ uint16_t serial_check () {
   static uint8_t pkt_apid;
   static uint16_t serial_buffer_pos;
   while(Serial.available()) {
-    timer.last_serial_in_millis = millis();
+    var_timer.last_serial_in_millis = millis();
     char c = Serial.read();
     serial_buffer[serial_buffer_pos++] = c;
     if (serial_status == SERIAL_COMPLETE) {
@@ -944,7 +1153,7 @@ uint16_t serial_check () {
         case 0x00: // start of CCSDS transmission
                    Serial.println ("Start of CCSDS transmission");
                    serial_status = SERIAL_CCSDS;
-                   data_len = TM_MAX_MSG_SIZE;
+                   data_len = JSON_MAX_SIZE;
                    break;
         case '[':  // start of JSON-encoded data string
                    Serial.println ("Start of JSON transmission");
@@ -965,7 +1174,7 @@ uint16_t serial_check () {
       switch (serial_buffer_pos-1) {
         case 1:         pkt_apid = (uint8_t)(c); 
                         break;
-        case 5:         data_len = min ((uint16_t)(serial_buffer[4] << 8) + (uint16_t)(serial_buffer[5]) + 6, TM_MAX_MSG_SIZE); 
+        case 5:         data_len = min ((uint16_t)(serial_buffer[4] << 8) + (uint16_t)(serial_buffer[5]) + 6, JSON_MAX_SIZE); 
                         break;
         default:        if (serial_buffer_pos-1 == data_len) {
                           // CCSDS packet is complete
@@ -989,7 +1198,7 @@ uint16_t serial_check () {
                                   if (!tm_this->serial_connected) { announce_established_serial_connection (); }
                                   break;
                         case 'o': // keep-alive indicating counterpart not receiving over serial
-                                  if (!eeprom_this->debug_over_serial and tm_this->serial_connected) {
+                                  if (!config_this->debug_over_serial and tm_this->serial_connected) {
                                     tm_this->serial_connected = false;
                                     tm_this->warn_serial_connloss = true;
                                   }
@@ -1032,11 +1241,11 @@ uint16_t serial_check () {
                     break;  
       }
     }
-    if (serial_buffer_pos == TM_MAX_MSG_SIZE) { // something is wrong: line too long // TODO: overall assessment of maximal buffer sizes
-      serial_buffer[TM_MAX_MSG_SIZE-1] = '\0';
+    if (serial_buffer_pos == JSON_MAX_SIZE) { // something is wrong: line too long // TODO: overall assessment of maximal buffer sizes
+      serial_buffer[JSON_MAX_SIZE-1] = '\0';
       serial_buffer_pos = 0;
-      Serial_print_charptr ((char*)&serial_buffer, TM_MAX_MSG_SIZE);
-      if (!eeprom_this->debug_over_serial) {
+      Serial_print_charptr ((char*)&serial_buffer, JSON_MAX_SIZE);
+      if (!config_this->debug_over_serial) {
         tm_this->serial_connected = false;
       }
       sprintf (buffer, "Received too long message from %s", subsystemName[SS_OTHER]);
@@ -1070,21 +1279,12 @@ void serial_parse (uint16_t data_len) {
   }
   else {
     // generic ASCII string: likely debug information
-    #ifdef PLATFORM_ESP32
-    if (eeprom_esp32cam.esp32cam_debug) {
-      bus_publish_event (DEBUG_ESP32CAM, SS_ESP32CAM, EVENT_DEBUG, serial_buffer);
-    }
-    #endif
-    #ifdef PLATFORM_ESP32CAM
-    if (eeprom_esp32.esp32_debug) {
-      bus_publish_event (DEBUG_ESP32, SS_ESP32, EVENT_DEBUG, serial_buffer);
-    }
-    #endif
+    udp_publish ((char*)&serial_buffer, strlen(serial_buffer));
   }
 }
 
-void serial_parse_json () { // TODO: is full coverage needed / useful?  What about millis?
-  static StaticJsonDocument<TM_MAX_MSG_SIZE> obj;
+void serial_parse_json () { // TODO: is full coverage needed / useful?  What about millis?  Probably get rid of all this?
+  static StaticJsonDocument<JSON_MAX_SIZE> obj;
   char * json_str = strchr (serial_buffer, '{');
   char * tag_str = strchr (serial_buffer, ' ') + 1;
   char * separator = strchr (tag_str, ' ');
@@ -1150,15 +1350,6 @@ void serial_parse_json () { // TODO: is full coverage needed / useful?  What abo
                         }
                         else if (!strcmp(obj["cmd"], "reboot_fli3d")) {
                           cmd_reboot_fli3d ();
-                        }
-                        else if (!strcmp(obj["cmd"], "eeprom_reset")) {
-                          cmd_eeprom_reset ();
-                        }
-                        else if (!strcmp(obj["cmd"], "eeprom_load")) {
-                          cmd_eeprom_load ();
-                        }
-                        else if (!strcmp(obj["cmd"], "eeprom_save")) {
-                          cmd_eeprom_save ();
                         }
                         else if (!strcmp(obj["cmd"], "get_packet")) {
                           cmd_get_packet (json_str);
@@ -1301,7 +1492,6 @@ void serial_parse_json () { // TODO: is full coverage needed / useful?  What abo
                         break;
     case TM_RADIO:      // {\"ctr\":%u,\"data\":\"%s\"} 
                         radio.packet_ctr = obj["ctr"];
-                        // TODO: function to map data string back to packet (if useful)
                         bus_publish_pkt (TM_RADIO);
                         break;
     case TC_ESP32:      // forward command  
@@ -1314,14 +1504,14 @@ void serial_parse_json () { // TODO: is full coverage needed / useful?  What abo
                         else if (!strcmp(obj["cmd"], "reboot_fli3d")) {
                           cmd_reboot_fli3d ();
                         }
-                        else if (!strcmp(obj["cmd"], "eeprom_reset")) {
-                          cmd_eeprom_reset ();
+                        else if (!strcmp(obj["cmd"], "config_reset")) {
+                          cmd_config_reset ();
                         }
-                        else if (!strcmp(obj["cmd"], "eeprom_load")) {
-                          cmd_eeprom_load ();
+                        else if (!strcmp(obj["cmd"], "config_load")) {
+                          cmd_config_load ();
                         }
-                        else if (!strcmp(obj["cmd"], "eeprom_save")) {
-                          cmd_eeprom_save ();
+                        else if (!strcmp(obj["cmd"], "config_save")) {
+                          cmd_config_save ();
                         }
                         else if (!strcmp(obj["cmd"], "get_packet")) {
                           cmd_get_packet (json_str);
@@ -1366,13 +1556,7 @@ void serial_parse_ccsds (uint16_t data_len) {
                            case TC_REBOOT:             cmd_reboot ();
                                                        break;
                            case TC_REBOOT_FLI3D:       cmd_reboot_fli3d ();
-                                                       break;
-                           case TC_EEPROM_RESET:       cmd_eeprom_reset ();
-                                                       break;
-                           case TC_EEPROM_LOAD:        cmd_eeprom_load ();
-                                                       break;
-                           case TC_EEPROM_SAVE:        cmd_eeprom_save ();
-                                                       break;                                                       
+                                                       break;                                           
                            case TC_GET_PACKET:         cmd_get_packet (tc_this->json);
                                                        break;                                                       
                            case TC_SET_OPSMODE:        cmd_set_opsmode (tc_this->json);
@@ -1385,15 +1569,6 @@ void serial_parse_ccsds (uint16_t data_len) {
                                                        break;
                          }
                          break;
-    case DEBUG_ESP32CAM: memcpy (&debug_esp32cam, &serial_buffer + 6, sizeof(debug_esp32cam_t));
-                         bus_publish_pkt (DEBUG_ESP32CAM);
-                         break;
-    case EEPROM_NETWORK: memcpy (&eeprom_network, &serial_buffer + 6, sizeof(eeprom_network_t));
-                         bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Updated EEPROM network settings in memory");
-                         break;    
-    case EEPROM_ESP32:   memcpy (&eeprom_esp32, &serial_buffer + 6, sizeof(eeprom_esp32_t));
-                         bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Updated EEPROM esp32 settings in memory");
-                         break;    
     default:             // should not receive this CCSDS packet over serial
                          sprintf (buffer, "Received unknown packet with PID %d over serial", ccsds_hdr.apid_L - 42);
                          bus_publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
@@ -1429,13 +1604,7 @@ void serial_parse_ccsds (uint16_t data_len) {
                            case TC_REBOOT:             cmd_reboot ();
                                                        break;
                            case TC_REBOOT_FLI3D:       cmd_reboot_fli3d ();
-                                                       break;
-                           case TC_EEPROM_RESET:       cmd_eeprom_reset ();
-                                                       break;
-                           case TC_EEPROM_LOAD:        cmd_eeprom_load ();
-                                                       break;
-                           case TC_EEPROM_SAVE:        cmd_eeprom_save ();
-                                                       break;                                                       
+                                                       break;                                               
                            case TC_GET_PACKET:         cmd_get_packet (tc_this->json);
                                                        break;                                                       
                            case TC_SET_CAMMODE:        cmd_set_cammode (tc_this->json);
@@ -1448,14 +1617,6 @@ void serial_parse_ccsds (uint16_t data_len) {
                                                        break;
                          }
                          break;
-    case DEBUG_ESP32:    memcpy (&debug_esp32, &serial_buffer + 6, sizeof(debug_esp32_t));
-                         bus_publish_pkt (DEBUG_ESP32);
-                         break;
-    case EEPROM_NETWORK: memcpy (&eeprom_network, &serial_buffer + 6, sizeof(eeprom_network_t));
-                         bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Updated EEPROM network settings in memory");
-                         break;
-    case EEPROM_ESP32CAM:memcpy (&eeprom_esp32cam, &serial_buffer + 6, sizeof(eeprom_esp32cam_t));
-                         bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Updated EEPROM esp32cam settings in memory");
     default:             // should not receive this CCSDS packet over serial
                          sprintf (buffer, "Received unknown packet with PID %d over serial", ccsds_hdr.apid_L - 42);
                          bus_publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
@@ -1480,30 +1641,9 @@ bool cmd_reboot_fli3d () {
   cmd_reboot ();
 }
 
-bool cmd_eeprom_reset () {
-  bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Resetting EEPROM values in memory to defaults");
-  eeprom_reset (EEPROM_NETWORK, 0);
-  eeprom_reset (EEPROM_THIS, sizeof(eeprom_network));
-  return true;
-}
-
-bool cmd_eeprom_load () {
-  bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Loading settings from EEPROM");
-  eeprom_load (EEPROM_NETWORK, 0);
-  eeprom_load (EEPROM_THIS, sizeof(eeprom_network));
-  return true;
-}
-
-bool cmd_eeprom_save () {
-  bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Saving settings to EEPROM");
-  eeprom_save (EEPROM_NETWORK, 0);
-  eeprom_save (EEPROM_THIS, sizeof(eeprom_network));
-  return true;
-}
-
 bool cmd_get_packet (char* json_str) {
   // json: {"pkt":"tm_gps"}
-  StaticJsonDocument<TM_MAX_MSG_SIZE> obj;
+  StaticJsonDocument<JSON_MAX_SIZE> obj;
   deserializeJson(obj, json_str);
   if (obj.containsKey("pkt")) {
     uint8_t PID = id_of (obj["pkt"], sizeof(pidName[0]), (char*)pidName, sizeof(pidName));
@@ -1527,7 +1667,7 @@ bool cmd_get_packet (char* json_str) {
 
 bool cmd_set_opsmode (char* json_str) {
   // json: {"opsmode":"ready"}
-  StaticJsonDocument<TM_MAX_MSG_SIZE> obj;
+  StaticJsonDocument<JSON_MAX_SIZE> obj;
   deserializeJson(obj, json_str);
   if (obj.containsKey("opsmode")) {
     uint8_t opsmode = id_of (obj["opsmode"], sizeof(modeName[0]), (char*)modeName, sizeof(modeName));
@@ -1552,247 +1692,142 @@ bool cmd_set_opsmode (char* json_str) {
 bool cmd_set_parameter (char* json_str) {
   // json: {"wifi_ssid":"my_wifi","wifi_password":"my_password"}
   bool parameter_set = false;
-  StaticJsonDocument<TM_MAX_MSG_SIZE> obj;
+  StaticJsonDocument<JSON_MAX_SIZE> obj;
   deserializeJson(obj, json_str);
-  if (obj.containsKey("wifi_ssid")) {
-    strcpy (eeprom_network.wifi_ssid, obj["wifi_ssid"]);
-    sprintf (buffer, "Setting wifi_ssid for %s to '%s' (save and reboot needed)", subsystemName[SS_THIS], eeprom_network.wifi_ssid);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }
-  if (obj.containsKey("wifi_password")) { 
-    strcpy (eeprom_network.wifi_password, obj["wifi_password"]);
-    sprintf (buffer, "Setting wifi_password for %s to '%s' (save and reboot needed)", subsystemName[SS_THIS], eeprom_network.wifi_password);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }
-  if (obj.containsKey("ap_ssid")) { 
-    strcpy (eeprom_network.ap_ssid, obj["ap_ssid"]);
-    sprintf (buffer, "Setting ap_ssid for %s to '%s' (save and reboot needed)", subsystemName[SS_THIS], eeprom_network.ap_ssid);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }
-  if (obj.containsKey("ap_password")) { 
-    strcpy (eeprom_network.ap_password, obj["ap_password"]);
-    sprintf (buffer, "Setting ap_password for %s to '%s' (save and reboot needed)", subsystemName[SS_THIS], eeprom_network.ap_password);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }
-  if (obj.containsKey("udp_server")) { 
-    strcpy (eeprom_network.udp_server, obj["udp_server"]);
-    sprintf (buffer, "Setting udp_server for %s to '%s'", subsystemName[SS_THIS], eeprom_network.udp_server);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }  
-  if (obj.containsKey("yamcs_server")) { 
-    strcpy (eeprom_network.yamcs_server, obj["yamcs_server"]);
-    sprintf (buffer, "Setting yamcs_server for %s to '%s'", subsystemName[SS_THIS], eeprom_network.yamcs_server);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }
-  if (obj.containsKey("ntp_server")) { 
-    strcpy (eeprom_network.ntp_server, obj["ntp_server"]);
-    sprintf (buffer, "Setting ntp_server for %s to '%s' (save and reboot needed)", subsystemName[SS_THIS], eeprom_network.ntp_server);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }  
-  if (obj.containsKey("udp_port")) { 
-    eeprom_network.udp_port = obj["udp_port"];
-    sprintf (buffer, "Setting udp_port for %s to '%d'", subsystemName[SS_THIS], eeprom_network.udp_port);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }      
-  if (obj.containsKey("yamcs_tm_port")) { 
-    eeprom_network.yamcs_tm_port = obj["yamcs_tm_port"];
-    sprintf (buffer, "Setting yamcs_tm_port for %s to '%d'", subsystemName[SS_THIS], eeprom_network.yamcs_tm_port);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  } 
-  if (obj.containsKey("yamcs_tc_port")) { 
-    eeprom_network.yamcs_tc_port = obj["yamcs_tc_port"];
-    sprintf (buffer, "Setting yamcs_tc_port for %s to '%d'", subsystemName[SS_THIS], eeprom_network.yamcs_tc_port);
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    parameter_set = true;
-  }   
   #ifdef PLATFORM_ESP32
   if (obj.containsKey("radio_rate")) { 
-    eeprom_esp32.radio_rate = obj["radio_rate"];
-    timer.radio_interval = (1000 / eeprom_esp32.radio_rate);
-    sprintf (buffer, "Setting radio_rate to %d Hz", eeprom_esp32.radio_rate);
+    config_esp32.radio_rate = obj["radio_rate"];
+    var_timer.radio_interval = (1000 / config_esp32.radio_rate);
+    sprintf (buffer, "Setting radio_rate to %d Hz", config_esp32.radio_rate);
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
     parameter_set = true;
   } 
   if (obj.containsKey("pressure_rate")) { 
-    eeprom_esp32.pressure_rate = obj["pressure_rate"];
-    timer.pressure_interval = (1000 / eeprom_esp32.pressure_rate);
-    sprintf (buffer, "Setting pressure_rate to %d Hz", eeprom_esp32.pressure_rate);
+    config_esp32.pressure_rate = obj["pressure_rate"];
+    var_timer.pressure_interval = (1000 / config_esp32.pressure_rate);
+    sprintf (buffer, "Setting pressure_rate to %d Hz", config_esp32.pressure_rate);
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
     parameter_set = true;
   } 
   if (obj.containsKey("motion_rate")) { 
-    eeprom_esp32.motion_rate = obj["motion_rate"];
-    timer.motion_interval = (1000 / eeprom_esp32.motion_rate);
-    sprintf (buffer, "Setting motion_rate to %d Hz", eeprom_esp32.motion_rate);
+    config_esp32.motion_rate = obj["motion_rate"];
+    var_timer.motion_interval = (1000 / config_esp32.motion_rate);
+    sprintf (buffer, "Setting motion_rate to %d Hz", config_esp32.motion_rate);
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
     parameter_set = true;
   } 
   if (obj.containsKey("gps_rate")) { 
-    eeprom_esp32.gps_rate = obj["gps_rate"];
-    timer.gps_interval = (1000 / eeprom_esp32.gps_rate);
-    sprintf (buffer, "Setting gps_rate to %d Hz (save and reboot needed)", eeprom_esp32.gps_rate);
+    config_esp32.gps_rate = obj["gps_rate"];
+    var_timer.gps_interval = (1000 / config_esp32.gps_rate);
+    sprintf (buffer, "Setting gps_rate to %d Hz (save and reboot needed)", config_esp32.gps_rate);
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
     parameter_set = true;
   } 
   if (obj.containsKey("radio_enable")) { 
-    eeprom_esp32.radio_enable = obj["radio_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.radio_enable?"Enabling radio transmitter (save and reboot needed)":"Disabling radio transmitter (save and reboot needed)");      
+    config_esp32.radio_enable = obj["radio_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_esp32.radio_enable?"Enabling radio transmitter (save and reboot needed)":"Disabling radio transmitter (save and reboot needed)");      
     parameter_set = true;
   } 
   if (obj.containsKey("pressure_enable")) { 
-    eeprom_esp32.pressure_enable = obj["pressure_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.pressure_enable?"Enabling pressure sensor (save and reboot needed)":"Disabling pressure sensor (save and reboot needed)");      
+    config_esp32.pressure_enable = obj["pressure_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_esp32.pressure_enable?"Enabling pressure sensor (save and reboot needed)":"Disabling pressure sensor (save and reboot needed)");      
     parameter_set = true;
   } 
   if (obj.containsKey("motion_enable")) { 
-    eeprom_esp32.motion_enable = obj["motion_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.motion_enable?"Enabling accelerometer/gyroscope sensor (save and reboot needed)":"Disabling accelerometer/gyroscope sensor (save and reboot needed)");      
+    config_esp32.motion_enable = obj["motion_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_esp32.motion_enable?"Enabling accelerometer/gyroscope sensor (save and reboot needed)":"Disabling accelerometer/gyroscope sensor (save and reboot needed)");      
     parameter_set = true;
   } 
   if (obj.containsKey("gps_enable")) { 
-    eeprom_esp32.gps_enable = obj["gps_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.gps_enable?"Enabling gps receiver (save and reboot needed)":"Disabling gps receiver (save and reboot needed)");      
+    config_esp32.gps_enable = obj["gps_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_esp32.gps_enable?"Enabling gps receiver (save and reboot needed)":"Disabling gps receiver (save and reboot needed)");      
     parameter_set = true;
   } 
   if (obj.containsKey("camera_enable")) { 
-    eeprom_esp32.gps_enable = obj["camera_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.camera_enable?"Enabling camera (save and reboot needed)":"Disabling camera (save and reboot needed)");      
+    config_esp32.gps_enable = obj["camera_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_esp32.camera_enable?"Enabling camera (save and reboot needed)":"Disabling camera (save and reboot needed)");      
     parameter_set = true;
   } 
   if (obj.containsKey("ota_enable")) { 
-    eeprom_esp32.ota_enable = obj["ota_enable"];
-    if (eeprom_esp32.ota_enable) {
+    config_esp32.ota_enable = obj["ota_enable"];
+    if (config_esp32.ota_enable) {
       ota_setup ();
     }
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.ota_enable?"Enabling OTA firmware update":"Disabling OTA firmware update");      
-    parameter_set = true;
-  }
-  if (obj.containsKey("radio_debug")) { 
-    eeprom_esp32.radio_debug = obj["radio_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.radio_debug?"Enabling radio debug":"Disabling radio debug");      
-    parameter_set = true;
-  }
-  if (obj.containsKey("pressure_debug")) { 
-    eeprom_esp32.pressure_debug = obj["pressure_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.pressure_debug?"Enabling pressure debug":"Disabling pressure debug");      
-    parameter_set = true;
-  }
-    if (obj.containsKey("motion_debug")) { 
-    eeprom_esp32.motion_debug = obj["motion_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.motion_debug?"Enabling motion debug":"Disabling motion debug");      
-    parameter_set = true;
-  }
-    if (obj.containsKey("gps_debug")) { 
-    eeprom_esp32.gps_debug = obj["gps_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.gps_debug?"Enabling gps debug":"Disabling gps debug");      
-    parameter_set = true;
-  }
-    if (obj.containsKey("camera_debug")) { 
-    eeprom_esp32.camera_debug = obj["camera_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.camera_debug?"Enabling camera debug":"Disabling camera debug");      
-    parameter_set = true;
-  }
-    if (obj.containsKey("wifi_debug")) { 
-    eeprom_esp32.wifi_debug = obj["wifi_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.wifi_debug?"Enabling wifi debug":"Disabling wifi debug");      
-    parameter_set = true;
-  }
-    if (obj.containsKey("timer_debug")) { 
-    eeprom_esp32.timer_debug = obj["timer_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.timer_debug?"Enabling timer debug":"Disabling timer debug");      
-    parameter_set = true;
-  }
-    if (obj.containsKey("esp32_debug")) { 
-    eeprom_esp32.esp32_debug = obj["esp32_debug"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_esp32.esp32_debug?"Enabling esp32 debug":"Disabling esp32 debug");      
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_esp32.ota_enable?"Enabling OTA firmware update":"Disabling OTA firmware update");      
     parameter_set = true;
   }
   #endif
   #ifdef PLATFORM_ESP32CAM
   if (obj.containsKey("sd_enable")) { 
-    eeprom_esp32cam.sd_enable = obj["sd_enable"];
+    config_esp32cam.sd_enable = obj["sd_enable"];
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom.esp32cam.sd_enable?"Enabling use of SD card (save and reboot needed)":"Disabling use of SD card (save and reboot needed)");      
     parameter_set = true;
   }
   if (obj.containsKey("sd_json_enable")) { 
-    eeprom_esp32cam.sd_json_enable = obj["sd_json_enable"];
+    config_esp32cam.sd_json_enable = obj["sd_json_enable"];
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom.esp32cam.sd_json_enable?"Enabling logging to SD card in JSON format (save and reboot needed)":"Disabling logging to SD card in JSON (save and reboot needed)");      
     parameter_set = true;
   } 
   if (obj.containsKey("sd_ccsds_enable")) { 
-    eeprom_esp32cam.sd_ccsds_enable = obj["sd_ccsds_enable"];
+    config_esp32cam.sd_ccsds_enable = obj["sd_ccsds_enable"];
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom.esp32cam.sd_ccsds_enable?"Enabling logging to SD card in CCSDS format (save and reboot needed)":"Disabling logging to SD card in CCSDS (save and reboot needed)");      
     parameter_set = true;
   } 
   if (obj.containsKey("sd_image_enable")) { 
-    eeprom_esp32cam.sd_image_enable = obj["sd_image_enable"];
+    config_esp32cam.sd_image_enable = obj["sd_image_enable"];
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom.esp32cam.sd_image_enable?"Enabling storage of images to SD card (save and reboot needed)":"Disabling storage of images to SD card (save and reboot needed)");      
     parameter_set = true;
   }       
-  //     esp32cam_debug:1;        // 7
-  //     sd_debug:1;              //  6
-  //     wifi_debug:1;            //   5
-  //     camera_debug:1;          //    4
-  //     timer_debug:1;           //     3  
   #endif
   if (obj.containsKey("wifi_enable")) { 
-    eeprom_this->wifi_enable = obj["wifi_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_this->wifi_enable?"Enabling wifi":"Disabling wifi");      
+    config_this->wifi_enable = obj["wifi_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_this->wifi_enable?"Enabling wifi":"Disabling wifi");      
     parameter_set = true;
   } 
   if (obj.containsKey("wifi_udp_enable")) { 
-    eeprom_this->wifi_udp_enable = obj["wifi_udp_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_this->wifi_udp_enable?"Enabling udp transmission over wifi":"Disabling udp transmission over wifi");      
+    config_this->wifi_udp_enable = obj["wifi_udp_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_this->wifi_udp_enable?"Enabling udp transmission over wifi":"Disabling udp transmission over wifi");      
     parameter_set = true;
   } 
   if (obj.containsKey("wifi_yamcs_enable")) { 
-    eeprom_this->wifi_yamcs_enable = obj["wifi_yamcs_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_this->wifi_yamcs_enable?"Enabling connection to yamcs over wifi":"Disabling connection to yamcs over wifi");      
+    config_this->wifi_yamcs_enable = obj["wifi_yamcs_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_this->wifi_yamcs_enable?"Enabling connection to yamcs over wifi":"Disabling connection to yamcs over wifi");      
     parameter_set = true;
   }                   
   if (obj.containsKey("wifi_sta_enable")) { 
-    eeprom_this->wifi_sta_enable = obj["wifi_sta_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_this->wifi_sta_enable?"Enabling wifi in STA mode (save and reboot needed)":"Disabling wifi in STA mode (save and reboot needed)");      
+    config_this->wifi_sta_enable = obj["wifi_sta_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_this->wifi_sta_enable?"Enabling wifi in STA mode (save and reboot needed)":"Disabling wifi in STA mode (save and reboot needed)");      
     parameter_set = true;
   }
   if (obj.containsKey("wifi_ap_enable")) { 
-    eeprom_this->wifi_ap_enable = obj["wifi_ap_enable"];
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_this->wifi_ap_enable?"Enabling wifi in AP mode (save and reboot needed)":"Disabling wifi in AP mode (save and reboot needed)");      
+    config_this->wifi_ap_enable = obj["wifi_ap_enable"];
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_this->wifi_ap_enable?"Enabling wifi in AP mode (save and reboot needed)":"Disabling wifi in AP mode (save and reboot needed)");      
     parameter_set = true;
   }
   if (obj.containsKey("serial_ccsds")) { 
-    eeprom_this->serial_format = ENC_CCSDS;
+    config_this->serial_format = ENC_CCSDS;
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Setting serial transmission encoding to CCSDS");      
     parameter_set = true;
   }
   if (obj.containsKey("serial_json")) { 
-    eeprom_this->serial_format = ENC_JSON;
+    config_this->serial_format = ENC_JSON;
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Setting serial transmission encoding to JSON");      
     parameter_set = true;
   }
   if (obj.containsKey("udp_ccsds")) { 
-    eeprom_this->udp_format = ENC_CCSDS;
+    config_this->udp_format = ENC_CCSDS;
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Setting udp transmission encoding to CCSDS");      
     parameter_set = true;
   }
   if (obj.containsKey("udp_json")) { 
-    eeprom_this->udp_format = ENC_JSON;
+    config_this->udp_format = ENC_JSON;
     bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Setting udp transmission encoding to JSON");      
     parameter_set = true;
   }        
   if (obj.containsKey("debug_over_serial")) { 
-    eeprom_this->debug_over_serial = obj["debug_over_serial"];
+    config_this->debug_over_serial = obj["debug_over_serial"];
     tm_this->serial_connected = true;
-    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, eeprom_this->debug_over_serial?"Enabling debug over serial mode":"Disabling debug over serial mode");      
+    bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, config_this->debug_over_serial?"Enabling debug over serial mode":"Disabling debug over serial mode");      
     parameter_set = true;
   }
   if (!parameter_set) {
@@ -1806,58 +1841,74 @@ bool cmd_set_routing (char* json_str) {
   static byte* table_ptr;
   uint8_t PID;
   bool table_updated = false;
-  StaticJsonDocument<TM_MAX_MSG_SIZE> obj;
+  StaticJsonDocument<JSON_MAX_SIZE> obj;
   deserializeJson(obj, json_str);
   JsonObject entry = obj.as<JsonObject>();
   if (obj.containsKey("table")) {
     uint8_t table = id_of (obj["table"], sizeof(commLineName[0]), (char*)commLineName, sizeof(commLineName));
     switch (table) {
-      case COMM_SERIAL:     if (obj.containsKey("load")) {
-                              if (!strcmp(obj["load"], "default")) { routing_serial = (char*)&routing_serial_default; table_updated = true; }
-                              if (!strcmp(obj["load"], "all")) { routing_serial = (char*)&routing_all; table_updated = true; }
-                              if (!strcmp(obj["load"], "none")) { routing_serial = (char*)&routing_none; table_updated = true; }
-                              if (!strcmp(obj["load"], "debug")) { routing_serial = (char*)&routing_serial_debug; table_updated = true; }
-                            }
-                            table_ptr = (byte*)routing_serial;
-                            break; 
-      case COMM_WIFI_UDP:   if (obj.containsKey("load")) {
-                              if (!strcmp(obj["load"], "default")) { routing_udp = (char*)&routing_udp_default; table_updated = true; }
-                              if (!strcmp(obj["load"], "all")) { routing_udp = (char*)&routing_all; table_updated = true; }
-                              if (!strcmp(obj["load"], "none")) { routing_udp = (char*)&routing_none; table_updated = true; }
-                              if (!strcmp(obj["load"], "debug")) { routing_udp = (char*)&routing_udp_debug; table_updated = true; }
-                            }
-                            table_ptr = (byte*)routing_udp;
-                            break;
-      case COMM_WIFI_YAMCS: if (obj.containsKey("load")) {
-                              if (!strcmp(obj["load"], "default")) { routing_yamcs = (char*)&routing_yamcs_default; table_updated = true; }
-                              if (!strcmp(obj["load"], "all")) { routing_yamcs = (char*)&routing_all; table_updated = true; }
-                              if (!strcmp(obj["load"], "none")) { routing_yamcs = (char*)&routing_none; table_updated = true; }
-                              if (!strcmp(obj["load"], "debug")) { routing_yamcs = (char*)&routing_yamcs_debug; table_updated = true; }
-                            }
-                            table_ptr = (byte*)routing_yamcs;
-                            break;
+      case COMM_SERIAL:       if (obj.containsKey("load")) {
+                                if (!strcmp(obj["load"], "default")) { routing_serial = (char*)&routing_serial_default; table_updated = true; }
+                                if (!strcmp(obj["load"], "all")) { routing_serial = (char*)&routing_all; table_updated = true; }
+                                if (!strcmp(obj["load"], "none")) { routing_serial = (char*)&routing_none; table_updated = true; }
+                                if (!strcmp(obj["load"], "debug")) { routing_serial = (char*)&routing_serial_debug; table_updated = true; }
+                              }
+                              table_ptr = (byte*)routing_serial;
+                              break; 
+      case COMM_WIFI_UDP:     if (obj.containsKey("load")) {
+                                if (!strcmp(obj["load"], "default")) { routing_udp = (char*)&routing_udp_default; table_updated = true; }
+                                if (!strcmp(obj["load"], "all")) { routing_udp = (char*)&routing_all; table_updated = true; }
+                                if (!strcmp(obj["load"], "none")) { routing_udp = (char*)&routing_none; table_updated = true; }
+                                if (!strcmp(obj["load"], "debug")) { routing_udp = (char*)&routing_udp_debug; table_updated = true; }
+                              }
+                              table_ptr = (byte*)routing_udp;
+                              break;
+      case COMM_WIFI_YAMCS:   if (obj.containsKey("load")) {
+                                if (!strcmp(obj["load"], "default")) { routing_yamcs = (char*)&routing_yamcs_default; table_updated = true; }
+                                if (!strcmp(obj["load"], "all")) { routing_yamcs = (char*)&routing_all; table_updated = true; }
+                                if (!strcmp(obj["load"], "none")) { routing_yamcs = (char*)&routing_none; table_updated = true; }
+                                if (!strcmp(obj["load"], "debug")) { routing_yamcs = (char*)&routing_yamcs_debug; table_updated = true; }
+                              }
+                              table_ptr = (byte*)routing_yamcs;
+                              break;
+      case COMM_FS_CCSDS:     if (obj.containsKey("load")) {
+                                if (!strcmp(obj["load"], "default")) { routing_fs_ccsds = (char*)&routing_fs_ccsds_default; table_updated = true; }
+                                if (!strcmp(obj["load"], "all")) { routing_fs_ccsds = (char*)&routing_all; table_updated = true; }
+                                if (!strcmp(obj["load"], "none")) { routing_fs_ccsds = (char*)&routing_none; table_updated = true; }
+                                if (!strcmp(obj["load"], "debug")) { routing_fs_ccsds = (char*)&routing_fs_ccsds_debug; table_updated = true; }
+                              }
+                              table_ptr = (byte*)routing_fs_ccsds;
+                              break;
+      case COMM_FS_JSON:      if (obj.containsKey("load")) {
+                                if (!strcmp(obj["load"], "default")) { routing_fs_json = (char*)&routing_fs_json_default; table_updated = true; }
+                                if (!strcmp(obj["load"], "all")) { routing_fs_json = (char*)&routing_all; table_updated = true; }
+                                if (!strcmp(obj["load"], "none")) { routing_fs_json = (char*)&routing_none; table_updated = true; }
+                                if (!strcmp(obj["load"], "debug")) { routing_fs_json = (char*)&routing_fs_json_debug; table_updated = true; }
+                              }
+                              table_ptr = (byte*)routing_fs_json;
+                              break;                            
       #ifdef PLATFORM_ESP32CAM
-      case COMM_SD_CCSDS:   if (obj.containsKey("load")) {
-                              if (!strcmp(obj["load"], "default")) { routing_sd_ccsds = (char*)&routing_sd_ccsds_default; table_updated = true; }
-                              if (!strcmp(obj["load"], "all")) { routing_sd_ccsds = (char*)&routing_all; table_updated = true; }
-                              if (!strcmp(obj["load"], "none")) { routing_sd_ccsds = (char*)&routing_none; table_updated = true; }
-                              if (!strcmp(obj["load"], "debug")) { routing_sd_ccsds = (char*)&routing_sd_ccsds_debug; table_updated = true; }
-                            }
-                            table_ptr = (byte*)routing_sd_ccsds;
-                            break;
-      case COMM_SD_JSON:    if (obj.containsKey("load")) {
-                              if (!strcmp(obj["load"], "default")) { routing_sd_json = (char*)&routing_sd_json_default; table_updated = true; }
-                              if (!strcmp(obj["load"], "all")) { routing_sd_json = (char*)&routing_all; table_updated = true; }
-                              if (!strcmp(obj["load"], "none")) { routing_sd_json = (char*)&routing_none; table_updated = true; }
-                              if (!strcmp(obj["load"], "debug")) { routing_sd_json = (char*)&routing_sd_json_debug; table_updated = true; }
-                            }
-                            table_ptr = (byte*)routing_sd_json;
-                            break;
+      case COMM_SD_CCSDS:     if (obj.containsKey("load")) {
+                                if (!strcmp(obj["load"], "default")) { routing_sd_ccsds = (char*)&routing_sd_ccsds_default; table_updated = true; }
+                                if (!strcmp(obj["load"], "all")) { routing_sd_ccsds = (char*)&routing_all; table_updated = true; }
+                                if (!strcmp(obj["load"], "none")) { routing_sd_ccsds = (char*)&routing_none; table_updated = true; }
+                                if (!strcmp(obj["load"], "debug")) { routing_sd_ccsds = (char*)&routing_sd_ccsds_debug; table_updated = true; }
+                              }
+                              table_ptr = (byte*)routing_sd_ccsds;
+                              break;
+      case COMM_SD_JSON:      if (obj.containsKey("load")) {
+                                if (!strcmp(obj["load"], "default")) { routing_sd_json = (char*)&routing_sd_json_default; table_updated = true; }
+                                if (!strcmp(obj["load"], "all")) { routing_sd_json = (char*)&routing_all; table_updated = true; }
+                                if (!strcmp(obj["load"], "none")) { routing_sd_json = (char*)&routing_none; table_updated = true; }
+                                if (!strcmp(obj["load"], "debug")) { routing_sd_json = (char*)&routing_sd_json_debug; table_updated = true; }
+                              }
+                              table_ptr = (byte*)routing_sd_json;
+                              break;
       #endif
-      default:              sprintf (buffer, "Table '%s' unknown", obj["table"].as<char*>());
-                            bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
-                            return false;
-                            break; 
+      default:                sprintf (buffer, "Table '%s' unknown", obj["table"].as<char*>());
+                              bus_publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
+                              return false;
+                              break; 
     }
     if (table_updated) {
       sprintf (buffer, "Loading '%s' settings for routing over %s", obj["load"].as<char*>(), obj["table"].as<char*>());
@@ -1886,24 +1937,9 @@ bool cmd_set_routing (char* json_str) {
 // SUPPORT FUNCTIONS
 
 uint8_t id_of (const char* string2, uint8_t string_len, const char* array_of_strings, uint16_t array_len) { 
-  //Serial.print ("Tag: [");
-  //Serial.print (string2);
-  //Serial.print ("] ");
-  //Serial.print (string_len);
-  //Serial.print (" [");
-  //Serial.print (array_of_strings);
-  //Serial.print ("] ");
-  //Serial.println (array_len);
   char string[string_len]; 
   strcpy (string, string2);
-  //Serial_print_charptr ((char*)&string, string_len);
-  //Serial.println (string_len);
-  //Serial.println (array_len);
-  //Serial.println ((char*)&string);
   for (uint8_t id = 0; id < array_len / string_len; id++) {
-    //Serial.println (id);
-    //Serial_print_charptr ((char*)(array_of_strings + string_len*id), string_len);
-    //Serial.println ((char*)(array_of_strings + string_len*id));
     if (!strcmp (string, (char*)(array_of_strings + string_len*id))) {
       return id;
     }
@@ -1920,15 +1956,15 @@ void Serial_print_charptr (char *ptr, uint8_t len) {
 }
 
 void tohex(unsigned char * in, size_t insz, char * out, size_t outsz) {
-    unsigned char * pin = in;
-    const char * hex = "0123456789ABCDEF";
-    char * pout = out;
-    for(; pin < in+insz; pout +=2, pin++){
-        pout[0] = hex[(*pin>>4) & 0xF];
-        pout[1] = hex[ *pin     & 0xF];
-        if (pout + 2 - out > outsz){
-            break;
-        }
+  unsigned char * pin = in;
+  const char * hex = "0123456789ABCDEF";
+  char * pout = out;
+  for(; pin < in+insz; pout +=2, pin++){
+    pout[0] = hex[(*pin>>4) & 0xF];
+    pout[1] = hex[ *pin     & 0xF];
+    if (pout + 2 - out > outsz){
+      break;
     }
-    pout[-1] = 0;
+  }
+  pout[-1] = 0;
 }
