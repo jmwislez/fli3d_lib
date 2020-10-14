@@ -16,7 +16,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <ESP8266FtpServer.h>
+#include <ESP32FtpServer.h>
 #include <NTPClient.h>
 #include <LinkedList.h>
 #include <Arduino.h>
@@ -153,6 +153,7 @@ extern const char dataEncodingName[3][8];
 // network protocols
 #define PROTO_UDP              0
 #define PROTO_TCP              1
+extern const char ipProtocolName[2][4];
 
 // data channels
 #define COMM_SERIAL            0

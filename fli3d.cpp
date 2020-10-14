@@ -83,9 +83,10 @@ const char modeName[7][10] =              { "init", "checkout", "ready", "thrust
 const char cameraModeName[4][7] =         { "init", "idle", "single", "stream" };
 const char cameraResolutionName[11][10] = { "160x120", "invalid1", "invalid2", "240x176", "320x240", "400x300", "640x480", "800x600", "1024x768", "1280x1024", "1600x1200" };
 const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
-const char commLineName[10][13] =          { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs_ccsds", "fs_json", "radio" };
+const char commLineName[10][13] =         { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs_ccsds", "fs_json", "radio" };
 const char tcName[9][20] =                { "reboot", "reboot_fli3d", "config_reset", "config_load", "config_save", "get_packet", "set_opsmode", "set_parameter", "set_routing" };
 const char gpsStatusName[5][10] =         { "none", "est", "time_only", "std", "dgps" }; 
+const char ipProtocolName[2][4] =         { "UDP", "TCP" }; 
 
 //                                                  STS_ESP32 STS_ESP32CAM TM_ESP32 TM_ESP32CAM TM_CAMERA TM_GPS TM_MOTION TM_PRESSURE TM_RADIO TM_TIMER TC_ESP32 TC_ESP32CAM 
 
@@ -258,6 +259,7 @@ void load_default_config () {
 
 bool fs_load_config() {
   char linebuffer[80];
+  uint8_t value_start;
   File file = LITTLEFS.open ("/config.txt");
   if (!file) {
     bus_publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "Failed to open configuration file 'config.txt' from FS");
@@ -266,122 +268,163 @@ bool fs_load_config() {
   uint8_t i = 0; 
   while (file.available ()) {
     linebuffer[i] = file.read();
+    if (linebuffer[i] == '=') {
+      value_start = i + 1;
+   	}
     if (linebuffer[i] != '\r') { // ignore \r
       if (linebuffer[i] == '\n') { // full line read
         linebuffer[i] = 0; // mark end of c string
         if (String(linebuffer).startsWith("wifi_ssid")) {
-          strcpy (config_network.wifi_ssid, String(linebuffer).substring(5).c_str());
+          strcpy (config_network.wifi_ssid, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set wifi_ssid to " + String (config_network.wifi_ssid));
         }
         if (String(linebuffer).startsWith("wifi_password")) {
-          strcpy (config_network.wifi_password, String(linebuffer).substring(9).c_str());
+          strcpy (config_network.wifi_password, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set wifi_password to " + String (config_network.wifi_password));
         }
         if (String(linebuffer).startsWith("ap_ssid")) {
-          strcpy (config_network.ap_ssid, String(linebuffer).substring(8).c_str());
-        }
+          strcpy (config_network.ap_ssid, String(linebuffer).substring(value_start).c_str());
+           Serial.println ("Set ap_ssid to " + String (config_network.ap_ssid));
+       }
         if (String(linebuffer).startsWith("ap_password")) {
-          strcpy (config_network.ap_password, String(linebuffer).substring(12).c_str());
+          strcpy (config_network.ap_password, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set ap_password to " + String (config_network.ap_password));
         }
         if (String(linebuffer).startsWith("ftp_user")) {
-          strcpy (config_network.ftp_user, String(linebuffer).substring(8).c_str());
+          strcpy (config_network.ftp_user, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set ftp_user to " + String (config_network.ftp_user));
         }
         if (String(linebuffer).startsWith("ftp_password")) {
-          strcpy (config_network.ftp_password, String(linebuffer).substring(12).c_str());
+          strcpy (config_network.ftp_password, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set ftp_password to " + String (config_network.ftp_password));
         }
          if (String(linebuffer).startsWith("udp_server")) {
-          strcpy (config_network.udp_server, String(linebuffer).substring(11).c_str());
+          strcpy (config_network.udp_server, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set udp_server to " + String (config_network.udp_server));
         }
         if (String(linebuffer).startsWith("yamcs_server")) {
-          strcpy (config_network.yamcs_server, String(linebuffer).substring(11).c_str());
+          strcpy (config_network.yamcs_server, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set yamcs_server to " + String (config_network.yamcs_server));
         }
         if (String(linebuffer).startsWith("ntp_server")) {
-          strcpy (config_network.ntp_server, String(linebuffer).substring(11).c_str());
+          strcpy (config_network.ntp_server, String(linebuffer).substring(value_start).c_str());
+          Serial.println ("Set ntp_server to " + String (config_network.ntp_server));
         }
         if (String(linebuffer).startsWith("udp_port")) {
-          config_network.udp_port = String(linebuffer).substring(9).toInt();
+          config_network.udp_port = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set udp_port to " + String (config_network.udp_port));
         }
         if (String(linebuffer).startsWith("yamcs_tm_port")) {
-          config_network.yamcs_tm_port = String(linebuffer).substring(9).toInt();
+          config_network.yamcs_tm_port = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set yamcs_tm_port to " + String (config_network.yamcs_tm_port));
         }
         if (String(linebuffer).startsWith("yamcs_tc_port")) {
-          config_network.yamcs_tc_port = String(linebuffer).substring(9).toInt();
+          config_network.yamcs_tc_port = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set yamcs_tc_port to " + String (config_network.yamcs_tc_port));
         }
         if (String(linebuffer).startsWith("radio_rate")) {
-          config_this->radio_rate = String(linebuffer).substring(9).toInt();
+          config_this->radio_rate = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set radio_rate to " + String (config_this->radio_rate) + " Hz");
         }
         if (String(linebuffer).startsWith("pressure_rate")) {
-          config_this->pressure_rate = String(linebuffer).substring(9).toInt();
+          config_this->pressure_rate = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set pressure_rate to " + String (config_this->pressure_rate) + " Hz");
         }
         if (String(linebuffer).startsWith("motion_rate")) {
-          config_this->motion_rate = String(linebuffer).substring(9).toInt();
+          config_this->motion_rate = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set motion_rate to " + String (config_this->motion_rate) + " Hz");
         }
         if (String(linebuffer).startsWith("gps_rate")) {
-          config_this->gps_rate = String(linebuffer).substring(9).toInt();
+          config_this->gps_rate = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set gps_rate to " + String (config_this->gps_rate) + " Hz");
         }
         if (String(linebuffer).startsWith("wifi_enable")) {
-          config_this->wifi_enable = String(linebuffer).substring(9).toInt();
+          config_this->wifi_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set wifi_enable to " + String(config_this->wifi_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("wifi_sta_enable")) {
-          config_this->wifi_sta_enable = String(linebuffer).substring(9).toInt();
+          config_this->wifi_sta_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set wifi_sta_enable to " + String(config_this->wifi_sta_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("wifi_ap_enable")) {
-          config_this->wifi_ap_enable = String(linebuffer).substring(9).toInt();
+          config_this->wifi_ap_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set wifi_ap_enable to " + String(config_this->wifi_ap_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("wifi_udp_enable")) {
-          config_this->wifi_udp_enable = String(linebuffer).substring(9).toInt();
+          config_this->wifi_udp_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set wifi_udp_enable to " + String(config_this->wifi_udp_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("wifi_yamcs_enable")) {
-          config_this->wifi_yamcs_enable = String(linebuffer).substring(9).toInt();
+          config_this->wifi_yamcs_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set wifi_yamcs_enable to " + String(config_this->wifi_yamcs_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("fs_enable")) {
-          config_this->fs_enable = String(linebuffer).substring(9).toInt();
+          config_this->fs_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set fs_enable to " + String(config_this->fs_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("fs_json_enable")) {
-          config_this->fs_json_enable = String(linebuffer).substring(9).toInt();
+          config_this->fs_json_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set fs_json_enable to " + String(config_this->fs_json_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("fs_ccsds_enable")) {
-          config_this->fs_ccsds_enable = String(linebuffer).substring(9).toInt();
+          config_this->fs_ccsds_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set fs_ccsds_enable to " + String(config_this->fs_ccsds_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("radio_enable")) {
-          config_this->radio_enable = String(linebuffer).substring(9).toInt();
+          config_this->radio_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set radio_enable to " + String(config_this->radio_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("pressure_enable")) {
-          config_this->pressure_enable = String(linebuffer).substring(9).toInt();
+          config_this->pressure_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set pressure_enable to " + String(config_this->pressure_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("motion_enable")) {
-          config_this->motion_enable = String(linebuffer).substring(9).toInt();
+          config_this->motion_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set motion_enable to " + String(config_this->motion_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("gps_enable")) {
-          config_this->gps_enable = String(linebuffer).substring(9).toInt();
+          config_this->gps_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set gps_enable to " + String(config_this->gps_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("camera_enable")) {
-          config_this->camera_enable = String(linebuffer).substring(9).toInt();
+          config_this->camera_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set camera_enable to " + String(config_this->camera_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("serial_format")) {
-          config_this->serial_format = String(linebuffer).substring(9).toInt();
+          config_this->serial_format = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set serial_format to " + String(dataEncodingName[config_this->serial_format]));
         }
         if (String(linebuffer).startsWith("udp_format")) {
-          config_this->udp_format = String(linebuffer).substring(9).toInt();
+          config_this->udp_format = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set udp_format to " + String(dataEncodingName[config_this->udp_format]));
         }
         if (String(linebuffer).startsWith("yamcs_protocol")) {
-          config_this->yamcs_protocol = String(linebuffer).substring(9).toInt();
+          config_this->yamcs_protocol = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set yamcs_protocol to " + String(ipProtocolName[config_this->yamcs_protocol]));
         }        
         if (String(linebuffer).startsWith("debug_over_serial")) {
-          config_this->debug_over_serial = String(linebuffer).substring(9).toInt();
+          config_this->debug_over_serial = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set debug_over_serial to " + String(config_this->debug_over_serial?"true":"false"));
         }
         if (String(linebuffer).startsWith("ota_enable")) {
-          config_this->ota_enable = String(linebuffer).substring(9).toInt();
+          config_this->ota_enable = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set ota_enable to " + String(config_this->ota_enable?"true":"false"));
         }
         if (String(linebuffer).startsWith("timer_debug")) {
-          config_this->timer_debug = String(linebuffer).substring(9).toInt();
+          config_this->timer_debug = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set timer_debug to " + String(config_this->timer_debug?"true":"false"));
         }
         if (String(linebuffer).startsWith("mpu6050_accel_offset_x_sensor")) {
-          mpu6050.a_z_rocket_offset = String(linebuffer).substring(9).toInt();
+          mpu6050.a_z_rocket_offset = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set mpu6050.a_z_rocket_offset to " + String(mpu6050.a_z_rocket_offset));
         } 
         if (String(linebuffer).startsWith("mpu6050_accel_offset_y_sensor")) {
-          mpu6050.a_x_rocket_offset = String(linebuffer).substring(9).toInt();
+          mpu6050.a_x_rocket_offset = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set mpu6050.a_x_rocket_offset to " + String(mpu6050.a_x_rocket_offset));
         } 
         if (String(linebuffer).startsWith("mpu6050_accel_offset_z_sensor")) {
-          mpu6050.a_y_rocket_offset = String(linebuffer).substring(9).toInt();
+          mpu6050.a_y_rocket_offset = String(linebuffer).substring(value_start).toInt();
+          Serial.println ("Set mpu6050.a_y_rocket_offset to " + String(mpu6050.a_y_rocket_offset));
         }        
         i = 0;
       }
@@ -735,7 +778,7 @@ bool fs_json_publish (char* message) {
       logfile_json.close();
     }
   }
-  tm_this->fs_ccsds_buffer = linkedlist_fs_json.size();
+  tm_this->fs_json_buffer = linkedlist_fs_json.size();
   return true;  
 }
 
