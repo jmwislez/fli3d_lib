@@ -1,6 +1,6 @@
 /*
- * Fli3d - Library (wifi, fs, bus, TM, eeprom functionality)
- * version: 2020-10-04
+ * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
+ * version: 2020-10-18
  */
  
 #ifndef _FLI3D_H_
@@ -27,7 +27,8 @@
 
 #define SerialBaud                115200
 #define JSON_MAX_SIZE             250
-#define WIFI_TIMEOUT              30     // s
+#define WIFI_TIMEOUT              120    // s
+#define NTP_TIMEOUT               60     // s
 #define WIFI_POLL                 5      // s
 #define RADIO_BAUD                2000   // transmission speed over 433 MHz radio
 #define KEEPALIVE_INTERVAL        200    // ms for keep-alive of serial connection between ESP32 and ESP32cam
@@ -55,7 +56,6 @@
 #define TC_THIS      TC_ESP32       // define default system TC packet
 #define TC_OTHER     TC_ESP32CAM    // define default TC packet destination
 #define STS_THIS     STS_ESP32      // define default system STS packet
-#define CONFIG_THIS  CONFIG_ESP32   // define default system EEPROM packet
 #endif
 #ifdef PLATFORM_ESP32CAM
 #define SS_THIS      SS_ESP32CAM    // define default subsystem
@@ -64,7 +64,6 @@
 #define TC_THIS      TC_ESP32CAM    // define default system TC packet
 #define TC_OTHER     TC_ESP32       // define default TC packet destination
 #define STS_THIS     STS_ESP32CAM   // define default system STS packet
-#define CONFIG_THIS  CONFIG_ESP32CAM // define default system EEPROM packet
 #endif
 
 // PIDs
@@ -129,8 +128,8 @@ extern const char cameraModeName[4][7];
 // cam resolutions
 #define RES_160x120            0
 #define RES_240x176            1
-#define RES_240x176            2
-#define RES_240x176            3
+#define RES_INVALID1           2
+#define RES_INVALID2           3
 #define RES_320x240            4 
 #define RES_400x300            5
 #define RES_640x480            6
@@ -163,10 +162,9 @@ extern const char ipProtocolName[2][4];
 #define COMM_SD_CCSDS          4
 #define COMM_SD_JSON           5
 #define COMM_SD_CAM            6
-#define COMM_FS_CCSDS          7
-#define COMM_FS_JSON           8
-#define COMM_RADIO             9
-extern const char commLineName[10][13];
+#define COMM_FS                7
+#define COMM_RADIO             8
+extern const char commLineName[9][13];
 
 #define TC_REBOOT              0
 #define TC_REBOOT_FLI3D        1
@@ -190,7 +188,7 @@ extern const char gpsStatusName[5][10];
 
 // TM/TC packet definitions
 
-typedef struct __attribute__ ((packed)) ccsds_hdr_t {
+struct __attribute__ ((packed)) ccsds_hdr_t {
   uint8_t  apid_H:3;                // 0:5
   bool     sec_hdr:1;               // 0: 4
   bool     type:1;                  // 0:  3
@@ -203,13 +201,14 @@ typedef struct __attribute__ ((packed)) ccsds_hdr_t {
   uint8_t  pkt_len_L;               // 5
 }; 
 
-typedef struct __attribute__ ((packed)) ccsds_t {
+struct __attribute__ ((packed)) ccsds_t {
   char     ccsds_hdr[6];
   char     blob[JSON_MAX_SIZE];
   uint8_t  blob_size;
+  uint8_t  PID;
 };
 
-typedef struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
+struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  type:4;                  // 4
@@ -218,7 +217,7 @@ typedef struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
   uint8_t  message_size;
 };
 
-typedef struct __attribute__ ((packed)) sts_esp32cam_t { // APID: 43 (2b)
+struct __attribute__ ((packed)) sts_esp32cam_t { // APID: 43 (2b)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  type:4;                  // 4
@@ -227,7 +226,7 @@ typedef struct __attribute__ ((packed)) sts_esp32cam_t { // APID: 43 (2b)
   uint8_t  message_size;
 }; 
 
-typedef struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
+struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  opsmode:4;               // 4
@@ -245,15 +244,11 @@ typedef struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   uint8_t  yamcs_rate;
   uint8_t  serial_in_rate;
   uint8_t  serial_out_rate;
-  uint8_t  fs_json_rate;
-  uint8_t  fs_ccsds_rate;
-  uint8_t  udp_buffer;
-  uint8_t  yamcs_buffer;
-  uint8_t  serial_buffer;
-  uint8_t  fs_json_buffer;
-  uint8_t  fs_ccsds_buffer;
-  uint32_t mem_free;
-  uint32_t fs_free;
+  uint8_t  fs_rate;
+  uint16_t yamcs_buffer;
+  uint16_t serial_buffer;
+  uint16_t mem_free;
+  uint16_t fs_free;
   bool     radio_enabled:1;         // 7
   bool     pressure_enabled:1;      //  6
   bool     motion_enabled:1;        //   5
@@ -263,17 +258,17 @@ typedef struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool     wifi_udp_enabled:1;      //       1
   bool     wifi_yamcs_enabled:1;    //        0
   bool     fs_enabled:1;            // 7
-  bool     fs_json_enabled:1;       //  6
-  bool     fs_ccsds_enabled:1;      //   5
+  bool     free_26:1;               //  6
+  bool     free_25:1;               //   5
   bool     fs_ftp_enabled:1;        //    4
   bool     free_23:1;               //     3
   bool     serial_connected:1;      //      2
   bool     wifi_connected:1;        //       1 
   bool     separation_sts:1;        //        0  
-  bool     warn_serial_connloss:1;  // 7
-  bool     warn_wifi_connloss:1;    //  6
+  bool     warn_serial_connloss:1;  // 7        
+  bool     warn_wifi_connloss:1;    //  6       
   bool     err_serial_dataloss:1;   //   5
-  bool     err_udp_dataloss:1;      //    4
+  bool     free_34:1;               //    4
   bool     err_yamcs_dataloss:1;    //     3
   bool     err_fs_dataloss:1;       //      2
   bool     free_31:1;               //       1
@@ -285,10 +280,10 @@ typedef struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool     camera_current:1;        //     3
   bool     fs_current:1;            //      2
   bool     time_current:1;          //       1
-  bool     free_40:1;               //        0
+  bool     wifi_current:1;          //        0 TODO: useful?
 };
 
-typedef struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
+struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  error_ctr;
@@ -300,27 +295,22 @@ typedef struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   uint8_t  serial_in_rate;
   uint8_t  serial_out_rate;
   uint8_t  fs_json_rate;
-  uint8_t  fs_ccsds_rate;
+  uint8_t  fs_rate;
   uint8_t  sd_json_rate;
   uint8_t  sd_ccsds_rate;
   uint8_t  camera_image_rate;
-  uint8_t  udp_buffer;
   uint8_t  yamcs_buffer;
   uint8_t  serial_buffer;
-  uint8_t  fs_json_buffer;
-  uint8_t  fs_ccsds_buffer;
-  uint8_t  sd_json_buffer;
-  uint8_t  sd_ccsds_buffer;
-  uint32_t mem_free;
-  uint32_t fs_free;
-  uint32_t sd_free;
+  uint16_t mem_free;
+  uint16_t fs_free;
+  uint16_t sd_free;
   bool     wifi_enabled:1;          // 7
   bool     wifi_udp_enabled:1;      //  6
   bool     wifi_yamcs_enabled:1;    //   5
   bool     wifi_image_enabled:1;    //    4
   bool     fs_enabled:1;            //     3 
-  bool     fs_json_enabled:1;       //      2
-  bool     fs_ccsds_enabled:1;      //       1
+  bool     free_12:1;               //      2
+  bool     free_11:1;               //       1
   bool     fs_ftp_enabled:1;        //        0                 
   bool     sd_enabled:1;            // 7 
   bool     sd_image_enabled:1;      //  6
@@ -340,7 +330,7 @@ typedef struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool     free_30:1;               //        0  
 };
 
-typedef struct __attribute__ ((packed)) tm_camera_t { // APID: 46 (2e)
+struct __attribute__ ((packed)) tm_camera_t { // APID: 46 (2e)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  camera_mode:4;           // 4
@@ -360,7 +350,7 @@ typedef struct __attribute__ ((packed)) tm_camera_t { // APID: 46 (2e)
   char     filename[26]; 
 };
 
-typedef struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
+struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  status:4;                // 4
@@ -392,7 +382,7 @@ typedef struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
   bool     free_00:1;               //        0
 };
 
-typedef struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
+struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
   uint32_t millis:24;
   uint16_t packet_ctr;
   float    accel_x_rocket;
@@ -413,7 +403,7 @@ typedef struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
   int16_t  g_z_rocket_offset;
 }; 
 
-typedef struct __attribute__ ((packed)) tm_pressure_t { // APID: 49 (31)
+struct __attribute__ ((packed)) tm_pressure_t { // APID: 49 (31)
   uint32_t millis:24;
   uint16_t packet_ctr;
   float    pressure;
@@ -423,17 +413,15 @@ typedef struct __attribute__ ((packed)) tm_pressure_t { // APID: 49 (31)
   float    temperature;
 }; 
 
-typedef struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
+struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  opsmode:4;               // 4
   uint8_t  free:4;                  //  0
   uint8_t  error_ctr;
   uint8_t  warning_ctr;
-  uint8_t  esp32_udp_buffer;
   uint8_t  esp32_yamcs_buffer;
   uint8_t  esp32_serial_buffer;
-  uint8_t  esp32cam_udp_buffer;
   uint8_t  esp32cam_yamcs_buffer;
   uint8_t  esp32cam_serial_buffer;
   bool     separation_sts:1;        // 7
@@ -460,22 +448,25 @@ typedef struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
   uint16_t sd_free;
 }; 
 
-typedef struct __attribute__ ((packed)) tm_timer_t { // APID: 51 (33)  // TODO: change approach
+struct __attribute__ ((packed)) tm_timer_t { // APID: 51 (33)
   uint32_t millis:24;
   uint16_t packet_ctr;
-  uint32_t timer_rate;
-  uint8_t  radio_duration;
-  uint8_t  pressure_duration;
-  uint8_t  motion_duration;
-  uint8_t  gps_duration;
-  uint8_t  esp32cam_duration;
-  uint8_t  serial_duration;
-  uint8_t  ota_duration;
-  uint8_t  ftp_duration;
-  uint8_t  wifi_duration;
+  uint16_t  radio_duration;
+  uint16_t  pressure_duration;
+  uint16_t  motion_duration;
+  uint16_t  gps_duration;
+  uint16_t  esp32cam_duration;
+  uint16_t  serial_duration;
+  uint16_t  ota_duration;
+  uint16_t  ftp_duration;
+  uint16_t  wifi_duration;
+  uint16_t  publish_fs_duration;
+  uint16_t  publish_serial_duration;
+  uint16_t  publish_yamcs_duration;
+  uint16_t  publish_udp_duration;
 };
 
-typedef struct __attribute__ ((packed)) var_timer_t {
+struct __attribute__ ((packed)) var_timer_t {
   uint32_t next_second;
   uint32_t next_radio_time;
   uint32_t next_pressure_time;
@@ -498,19 +489,19 @@ typedef struct __attribute__ ((packed)) var_timer_t {
   bool     do_ntp:1;
 }; 
 
-typedef struct __attribute__ ((packed)) tc_esp32_t { // APID: 52 (34)
+struct __attribute__ ((packed)) tc_esp32_t { // APID: 52 (34)
   uint8_t  cmd;
   char     json[JSON_MAX_SIZE];
   uint8_t  json_size;
 }; 
 
-typedef struct __attribute__ ((packed)) tc_esp32cam_t { // APID: 53 (35)
+struct __attribute__ ((packed)) tc_esp32cam_t { // APID: 53 (35)
   uint8_t  cmd;
   char     json[JSON_MAX_SIZE];
   uint8_t  json_size;
 }; 
 
-typedef struct __attribute__ ((packed)) config_network_t {
+struct __attribute__ ((packed)) config_network_t {
   char     wifi_ssid[20]; 
   char     wifi_password[20];
   char     ap_ssid[20]; 
@@ -525,11 +516,13 @@ typedef struct __attribute__ ((packed)) config_network_t {
   uint16_t yamcs_tc_port;
 };
 
-typedef struct __attribute__ ((packed)) config_esp32_t { 
+struct __attribute__ ((packed)) config_esp32_t { 
   uint8_t  radio_rate = 2;          // Hz (valid: 2 or less)
   uint8_t  pressure_rate = 10;      // Hz (up to 157 Hz, highest resolution up to 23 Hz); reached 176 Hz on ESP8266
   uint8_t  motion_rate = 10;        // Hz (up to 400)
   uint8_t  gps_rate = 10;           // Hz (valid: 1,5,10,16)
+  char     config_file[20];
+  char     routing_file[20];
   bool     radio_enable:1;          
   bool     pressure_enable:1;       
   bool     motion_enable:1;         
@@ -541,17 +534,22 @@ typedef struct __attribute__ ((packed)) config_esp32_t {
   bool     wifi_udp_enable:1;       
   bool     wifi_yamcs_enable:1;     
   bool     fs_enable:1;
-  bool     fs_json_enable:1;    
-  bool     fs_ccsds_enable:1; 
   bool     serial_format:1;         
-  bool     udp_format:1;            
   bool     yamcs_protocol:1;            
   bool     debug_over_serial:1;     
   bool     ota_enable:1;
-  bool     timer_debug:1;
 };
 
-typedef struct __attribute__ ((packed)) config_esp32cam_t {
+struct __attribute__ ((packed)) var_esp32_t { 
+  char     today_dir[20];
+  uint16_t fs_last_packet[NUMBER_OF_PID];
+  uint16_t serial_last_packet[NUMBER_OF_PID];
+  uint16_t yamcs_last_packet[NUMBER_OF_PID];
+};
+
+struct __attribute__ ((packed)) config_esp32cam_t {
+  char     config_file[20];
+  char     routing_file[20];
   bool     wifi_enable:1;           
   bool     wifi_sta_enable:1;       
   bool     wifi_ap_enable:1;     
@@ -559,19 +557,22 @@ typedef struct __attribute__ ((packed)) config_esp32cam_t {
   bool     wifi_yamcs_enable:1;     
   bool     wifi_image_enable:1;
   bool     fs_enable:1;
-  bool     fs_json_enable:1;    
-  bool     fs_ccsds_enable:1;
   bool     sd_enable:1;               
   bool     sd_json_enable:1;        
   bool     sd_ccsds_enable:1;       
   bool     sd_image_enable:1;       
   bool     serial_format:1;         
-  bool     udp_format:1;            
   bool     yamcs_protocol:1;            
   bool     debug_over_serial:1;
 };
 
-extern ccsds_hdr_t        ccsds_hdr;
+struct __attribute__ ((packed)) var_esp32cam_t { 
+  char     today_dir[20];
+  uint16_t fs_last_packet[NUMBER_OF_PID];
+  uint16_t serial_last_packet[NUMBER_OF_PID];
+  uint16_t yamcs_last_packet[NUMBER_OF_PID];
+  uint16_t sd_ccsds_last_packet[NUMBER_OF_PID];
+};
 
 extern sts_esp32_t        sts_esp32;
 extern sts_esp32cam_t     sts_esp32cam;
@@ -583,76 +584,87 @@ extern tm_motion_t        mpu6050;
 extern tm_pressure_t      bmp280;
 extern tm_radio_t         radio;
 extern tm_timer_t         timer;
-extern var_timer_t        var_timer;
+extern tc_esp32_t         tc_esp32;
+extern tc_esp32cam_t      tc_esp32cam;
 
-#ifdef PLATFORM_ESP32
-extern tm_esp32_t*        tm_this;
-extern sts_esp32_t*       sts_this;
-extern config_esp32_t*    config_this;
-#endif
-#ifdef PLATFORM_ESP32CAM
-extern tm_esp32cam_t*     tm_this;
-extern sts_esp32cam_t*    sts_this;
-extern config_esp32cam_t* config_this;
-#endif
+extern var_timer_t        var_timer;
 
 extern config_network_t   config_network;
 extern config_esp32_t     config_esp32;
 extern config_esp32cam_t  config_esp32cam;
 
-extern LinkedList<ccsds_t*> linkedlist_serial;
-extern LinkedList<ccsds_t*> linkedlist_udp;
-extern LinkedList<ccsds_t*> linkedlist_yamcs;
-extern LinkedList<ccsds_t*> linkedlist_fs_ccsds;
-extern LinkedList<String>   linkedlist_fs_json;
+#ifdef PLATFORM_ESP32
+extern tm_esp32_t*        tm_this;
+extern sts_esp32_t*       sts_this;
+extern tc_esp32_t*        tc_this;
+extern tc_esp32cam_t*     tc_other;
+extern config_esp32_t*    config_this;
+#endif
 #ifdef PLATFORM_ESP32CAM
-extern LinkedList<ccsds_t*> linkedlist_sd_ccsds;
-extern LinkedList<String>   linkedlist_sd_json;
+extern tm_esp32cam_t*     tm_this;
+extern sts_esp32cam_t*    sts_this;
+extern tc_esp32cam_t*     tc_this;
+extern tc_esp32_t*        tc_other;
+extern config_esp32cam_t* config_this;
 #endif
 
-extern WiFiUDP wifiUDP;
 extern FtpServer ftpSrv; 
 
 extern char buffer[JSON_MAX_SIZE];
-extern char bus_buffer[JSON_MAX_SIZE + 25];
+#ifdef PLATFORM_ESP32
 extern char radio_buffer[2*(sizeof(tm_radio_t)+2)];
-extern char today_dir[14];
+#endif 
 
-extern bool wifi_setup ();
-extern void wifi_check ();
-extern void time_check ();
+// FS FUNCTIONALITY
 extern bool fs_setup ();
-extern uint32_t fs_free ();
 extern bool ftp_setup ();
-extern void load_default_config ();
-extern bool fs_load_config ();
+extern uint16_t fs_free ();
 
-extern void bus_publish_pkt (uint8_t PID);
-extern void bus_publish_event (uint8_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message);
-extern void bus_publish_tc (uint8_t PID, uint8_t cmd, char* json);
-extern bool serial_publish (char* packet_ptr, uint16_t packet_len);
-extern bool udp_publish (char* packet_ptr, uint16_t packet_len);
-extern bool yamcs_publish_udp (char* packet_ptr, uint16_t packet_len);
-extern bool yamcs_publish_tcp (char* packet_ptr, uint16_t packet_len);
-extern bool fs_json_publish (char* message);
-extern bool fs_ccsds_publish (char* packet_ptr, uint16_t packet_len);
+// CONFIGURATION FUNCTIONALITY
+extern void load_default_config ();
+extern bool fs_load_settings ();
+extern bool fs_load_config ();
+extern bool fs_load_routing ();
+String set_routing (char* routing_table, char* routing_string);
+	
+// WIFI FUNCTIONALITY
+extern bool wifi_setup ();
+extern bool wifi_ap_setup ();
+extern bool wifi_sta_setup ();
+extern bool wifi_check ();
+extern bool time_check ();
+
+// TM/TC FUNCTIONALITY
+extern void publish_packet (uint8_t PID);
+extern void publish_event (uint8_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message);
+extern void publish_tc (uint8_t PID, uint8_t cmd, char* json);
+extern bool publish_fs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
+extern bool publish_serial (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
+extern bool publish_yamcs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
+extern bool publish_udp_packet (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
+extern bool publish_udp_text (char* message);
 #ifdef PLATFORM_ESP32CAM
-extern bool sd_json_publish (char* message);
-extern bool sd_ccsds_publish (char* packet_ptr, uint16_t packet_len);
-extern uint32_t sd_free ();
+extern bool publish_sd_ccsds (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
+extern bool publish_sd_json (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
+extern uint16_t sd_free ();
 #endif
 
-extern void update_ccsds_hdr (uint16_t PID, bool pkt_type, uint16_t pkt_len);
-extern void buildJsonString (uint8_t PID);
+extern uint16_t get_ccsds_len (ccsds_t* ccsds_ptr);
+extern uint32_t get_ccsds_millis (ccsds_t* ccsds_ptr);
+extern uint16_t get_ccsds_packet_ctr (ccsds_t* ccsds_ptr);
+extern void update_ccsds_hdr (uint8_t PID, bool pkt_type, uint16_t pkt_len);
+extern void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr);
 
-extern void update_pkt (uint8_t PID);
-extern void reset_pkt (uint8_t PID);
+extern uint16_t update_packet (uint8_t PID);
+extern void reset_packet (uint8_t PID);
 
+// RADIO FUNCTIONALITY
 #ifdef PLATFORM_ESP32
 extern bool radio_setup ();
-extern void radio_publish ();
+extern void publish_radio ();
 #endif
 
+// SERIAL FUNCTIONALITY
 extern uint16_t serial_check ();
 extern void announce_established_serial_connection ();
 extern void announce_lost_serial_connection ();
@@ -660,6 +672,7 @@ extern void serial_parse (uint16_t data_len);
 extern void serial_parse_json (); 
 extern void serial_parse_ccsds (uint16_t data_len);
 
+// COMMANDS
 extern bool cmd_reboot ();
 extern bool cmd_reboot_fli3d ();
 extern bool cmd_get_packet (char* json_str);
@@ -667,8 +680,9 @@ extern bool cmd_set_opsmode (char* json_str);
 extern bool cmd_set_parameter (char* json_str);
 extern bool cmd_set_routing (char* json_str);
 
+// SUPPORT FUNCTIONS
 extern uint8_t id_of (const char* string, uint8_t string_len, const char* array_of_strings, uint16_t array_len);
-extern void tohex (unsigned char * in, size_t insz, char * out, size_t outsz);
-extern void Serial_print_charptr (char *ptr, uint8_t len);
+extern void build_hex_str (unsigned char * in, size_t insz, char * out, size_t outsz);
+extern void Serial_print_charptr (char *ptr, uint8_t len); // TODO: is debug function, to remove
 
 #endif // _FLI3D_H_

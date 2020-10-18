@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-10-17
+ * version: 2020-10-18
  */
 
 #include "fli3d.h"
@@ -12,7 +12,6 @@
 #endif
 
 WiFiUDP wifiUDP;
-WiFiClient wifiTCP;
 FtpServer ftpSrv;
 NTPClient timeClient(wifiUDP, config_network.ntp_server, 0);
 
@@ -80,7 +79,6 @@ const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
 const char commLineName[9][13] =          { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs", "radio" };
 const char tcName[9][20] =                { "reboot", "reboot_fli3d", "config_reset", "config_load", "config_save", "get_packet", "set_opsmode", "set_parameter", "set_routing" };
 const char gpsStatusName[5][10] =         { "none", "est", "time_only", "std", "dgps" }; 
-const char ipProtocolName[2][4] =         { "UDP", "TCP" }; 
 
 char routing_serial[NUMBER_OF_PID];
 char routing_udp[NUMBER_OF_PID];
@@ -97,27 +95,37 @@ char routing_sd_ccsds[NUMBER_OF_PID];
 bool fs_setup () {
   if (LITTLEFS.begin(false)) {
     if (LITTLEFS.totalBytes()-LITTLEFS.usedBytes() <= 4096) {
-      // FS is full, delete old data (TODO: ensure there is a way to inhibit this for data recovery after flight, e.g. using separation status for ESP32 and TBD for ESP32CAM)
-      File dir = LITTLEFS.open ("/");
-      File file = dir.openNextFile ();
-      char local_path_buffer[32];
-      while (file) {
+      // FS is full, delete old data 
+      #ifdef PLATFORM_ESP32
+      if (!esp32.separation) { // old data will only be deleted from ESP32 module if SEP_STS_PIN is connected to GND (Fli3d mated to rocket)
+      #endif
+      #ifdef PLATFORM_ESP32CAM
+      if (true) { // TODO: add viable inhibit for ESP32CAM
+      #endif
+        File dir = LITTLEFS.open ("/");
+        File file = dir.openNextFile ();
+        char local_path_buffer[32];
+        while (file) {
         if (file.isDirectory()) {
           sprintf (path_buffer, "%s", file.name());
           file.close ();
           File local_dir = LITTLEFS.open (path_buffer);
           File local_file = local_dir.openNextFile ();
           while (local_file) {
-            sprintf (local_path_buffer, "%s", local_file.name());
-            local_file.close ();
-            LITTLEFS.remove (local_path_buffer);
-            local_file = local_dir.openNextFile ();
+          sprintf (local_path_buffer, "%s", local_file.name());
+          local_file.close ();
+          LITTLEFS.remove (local_path_buffer);
+          local_file = local_dir.openNextFile ();
           }  
           LITTLEFS.rmdir (path_buffer);
         }
         file = dir.openNextFile ();
+        }
+        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "Deleted all data files since FS is full");
       }
-      publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "Deleted all data files since FS is full");
+      else {
+        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "FS is full, but data not deleted because this is enhibited");
+      }
     }
     // ensure there are no stale log files
     File dir = LITTLEFS.open ("/");
@@ -236,7 +244,6 @@ void load_default_config () {
   config_esp32.wifi_yamcs_enable = true;
   config_esp32.fs_enable = true;
   config_esp32.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
-  config_esp32.yamcs_protocol = PROTO_UDP; // TODO: test PROTO_TCP
   config_esp32.debug_over_serial = true;
   config_esp32.ota_enable = false;
   strcpy (config_esp32cam.config_file, "/default.cfg");
@@ -253,7 +260,6 @@ void load_default_config () {
   config_esp32cam.sd_ccsds_enable = true;
   config_esp32cam.sd_image_enable = true;
   config_esp32cam.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
-  config_esp32cam.yamcs_protocol = PROTO_UDP; // TODO: test TCP
   config_esp32cam.debug_over_serial = false;
   //                       0: STS_ESP32 
   //                       |  1: STS_ESP32CAM 
@@ -927,18 +933,9 @@ bool publish_yamcs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint1
         while (payload_ctr > var_this->yamcs_last_packet[PID] and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
           fs_ccsds.read((uint8_t*)ccsds_ptr, (size_t)ccsds_len); 
           if (get_ccsds_packet_ctr(ccsds_ptr) == ++var_this->yamcs_last_packet[PID]) {
-            switch ((uint8_t)config_this->yamcs_protocol) {
-              case PROTO_UDP: wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
-                              wifiUDP.write ((const uint8_t*)ccsds_ptr, get_ccsds_len (ccsds_ptr) + sizeof(ccsds_hdr_t));
-                              wifiUDP.endPacket();
-                              break;
-              case PROTO_TCP: if (!wifiTCP.connect(config_network.yamcs_server, config_network.yamcs_tm_port)) {
-                                tm_this->err_yamcs_dataloss = true;
-                                return false;
-                              }
-                              wifiTCP.write ((const uint8_t*)ccsds_ptr, ccsds_len);
-                              break;
-            }
+            wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
+            wifiUDP.write ((const uint8_t*)ccsds_ptr, get_ccsds_len (ccsds_ptr) + sizeof(ccsds_hdr_t));
+            wifiUDP.endPacket();
             tm_this->yamcs_rate++;
             tm_this->yamcs_buffer--; 
           }
@@ -958,18 +955,9 @@ bool publish_yamcs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint1
     }
     else {
       // write the latest message (real-time)
-      switch ((uint8_t)config_this->yamcs_protocol) {
-        case PROTO_UDP: wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
-                        wifiUDP.write ((const uint8_t*)ccsds_ptr, ccsds_len);
-                        wifiUDP.endPacket();   
-                        break;
-        case PROTO_TCP: if (!wifiTCP.connect(config_network.yamcs_server, config_network.yamcs_tm_port)) {
-                          tm_this->err_yamcs_dataloss = true;
-                          return false;
-                        }
-                        wifiTCP.write ((const uint8_t*)ccsds_ptr, ccsds_len);
-                        break;
-      }
+      wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
+      wifiUDP.write ((const uint8_t*)ccsds_ptr, ccsds_len);
+      wifiUDP.endPacket();            
       tm_this->yamcs_rate++;
       var_this->yamcs_last_packet[PID] = payload_ctr;
       return true;
@@ -1009,12 +997,56 @@ bool publish_udp_text (char* message) {
 }
 
 #ifdef PLATFORM_ESP32CAM
-bool sd_json_publish (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
-  // TODO: TBW
+bool publish_sd_ccsds (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
+  sprintf (path_buffer, "%s/PID_%u.raw", var_this->today_dir, PID);
+  File sd_ccsds = SD_MMC.open(path_buffer, FILE_APPEND);
+  if (!sd_ccsds) {
+    sprintf (buffer, "Failed to open '%s' on SD in append mode; disabling SD", path_buffer);
+    publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
+    tm_this->sd_enabled = false;
+    tm_this->err_sd_dataloss = true;
+    return false;
+  }
+  else {
+    tm_this->sd_ccsds_enabled = true;
+    tm_this->sd_current = true;
+    sd_ccsds.write ((const uint8_t*)ccsds_ptr, ccsds_len);
+    if (PID == STS_ESP32 or PID == STS_ESP32CAM or PID == TC_ESP32 or PID == TC_ESP32CAM) {
+      // variable length packet, need to zero-fill to fixed even length when stored
+      for (uint16_t i=0; i < JSON_MAX_SIZE + (JSON_MAX_SIZE%2) + 6 + sizeof(ccsds_hdr_t) - ccsds_len; i++) {
+        sd_ccsds.write ('\0');
+      }
+    }
+    else if (ccsds_len % 2) {
+      // uneven packet length, add one \0 to reach even packet length on file
+      sd_ccsds.write ('\0');
+    }      
+    tm_this->sd_rate++;
+    var_this->sd_ccsds_last_packet[PID] = payload_ctr;  
+    sd_ccsds.close();
+    return true;
+  }
 }
 
-bool sd_ccsds_publish (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
-  // TODO: TBW
+bool publish_sd_json (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
+  sprintf (path_buffer, "%s/json.raw", var_this->today_dir);
+  File sd_json = SD_MMC.open(path_buffer, FILE_APPEND);
+  if (!sd_json) {
+    sprintf (buffer, "Failed to open '%s' on SD in append mode; disabling SD", path_buffer);
+    publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
+    tm_this->sd_enabled = false;
+    tm_this->err_sd_dataloss = true;
+    return false;
+  }
+  else {
+    tm_this->sd_json_enabled = true;
+    tm_this->sd_current = true;
+    build_json_str (buffer, PID, ccsds_ptr);
+    sd_json.println (buffer);
+    tm_this->sd_rate++;
+    sd_json.close();
+    return true;
+  }
 }
 
 uint16_t sd_free () {
@@ -1508,7 +1540,7 @@ void serial_parse (uint16_t data_len) {
   }
 }
 
-void serial_parse_json () { // TODO: is full coverage needed / useful?  What about millis?  Probably get rid of all this?
+void serial_parse_json () { // TODO: delete after debug of Serial I/F ESP32<->ESP32CAM
   static StaticJsonDocument<JSON_MAX_SIZE> obj;
   char * json_str = strchr (serial_buffer, '{');
   char * tag_str = strchr (serial_buffer, ' ') + 1;
