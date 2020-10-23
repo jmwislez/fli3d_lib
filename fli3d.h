@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-10-18
+ * version: 2020-10-21
  */
  
 #ifndef _FLI3D_H_
@@ -13,10 +13,15 @@
 #define PLATFORM_ESP32CAM
 #endif
 
+//#define ASYNCUDP // uncomment to use AsyncUDP for commanding
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <ESP32FtpServer.h>
+#ifdef ASYNCUDP
+#include <AsyncUDP.h>
+#endif
+#include <ESPFtpServer.h>
 #include <NTPClient.h>
 #include <LinkedList.h>
 #include <Arduino.h>
@@ -88,9 +93,10 @@ extern const char pidName[NUMBER_OF_PID][13];
 #define EVENT_WARNING          2
 #define EVENT_ERROR            3
 #define EVENT_CMD              4
-#define EVENT_CMD_RESP         5
-#define EVENT_CMD_FAIL         6
-extern const char eventName[7][9];
+#define EVENT_CMD_ACK          5
+#define EVENT_CMD_RESP         6
+#define EVENT_CMD_FAIL         7
+extern const char eventName[8][9];
 
 // subsystem
 #define SS_ESP32               0
@@ -149,11 +155,6 @@ extern const char dataEncodingName[3][8];
 #define PKT_TM                 0
 #define PKT_TC                 1
 
-// network protocols
-#define PROTO_UDP              0
-#define PROTO_TCP              1
-extern const char ipProtocolName[2][4];
-
 // data channels
 #define COMM_SERIAL            0
 #define COMM_WIFI_UDP          1
@@ -166,13 +167,12 @@ extern const char ipProtocolName[2][4];
 #define COMM_RADIO             8
 extern const char commLineName[9][13];
 
-#define TC_REBOOT              0
-#define TC_REBOOT_FLI3D        1
-#define TC_GET_PACKET          5
-#define TC_SET_OPSMODE         6
-#define TC_SET_PARAMETER       7
-#define TC_SET_ROUTING         8
-extern const char tcName[9][20];
+#define TC_REBOOT              42
+#define TC_SET_OPSMODE         43
+#define TC_LOAD_CONFIGURATION  44
+#define TC_LOAD_ROUTING        45
+#define TC_SET_PARAMETER       46
+extern const char tcName[5][20];
 
 // serial buffer status
 #define SERIAL_UNKNOWN         0
@@ -206,6 +206,13 @@ struct __attribute__ ((packed)) ccsds_t {
   char     blob[JSON_MAX_SIZE];
   uint8_t  blob_size;
   uint8_t  PID;
+};
+
+struct __attribute__ ((packed)) ccsds_tc_t {
+  char     ccsds_hdr[6];
+  uint8_t  cmd_id;
+  uint8_t  int_parameter;
+  char     str_parameter[JSON_MAX_SIZE];
 };
 
 struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
@@ -273,14 +280,14 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool     err_fs_dataloss:1;       //      2
   bool     free_31:1;               //       1
   bool     free_30:1;               //        0
-  bool     radio_current:1;         // 7
-  bool     pressure_current:1;      //  6
-  bool     motion_current:1;        //   5
-  bool     gps_current:1;           //    4
-  bool     camera_current:1;        //     3
-  bool     fs_current:1;            //      2
-  bool     time_current:1;          //       1
-  bool     wifi_current:1;          //        0 TODO: useful?
+  bool     radio_active:1;          // 7
+  bool     pressure_active:1;      //  6
+  bool     motion_active:1;        //   5
+  bool     gps_active:1;           //    4
+  bool     camera_active:1;         //     3
+  bool     fs_active:1;            //      2
+  bool     time_set:1;          //       1
+  bool     free_40:1;               //        0 
 };
 
 struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
@@ -320,9 +327,9 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool     free_22:1;               //      2                 
   bool     free_21:1;               //       1                 
   bool     free_20:1;               //        0                 
-  bool     fs_current:1;            // 7
-  bool     sd_current:1;            //  6
-  bool     camera_current:1;        //   5
+  bool     fs_active:1;            // 7
+  bool     sd_active:1;            //  6
+  bool     camera_active:1;        //   5
   bool     wifi_connected:1;        //    4
   bool     serial_connected:1;      //     3
   bool     free_32:1;               //      2
@@ -425,10 +432,10 @@ struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
   uint8_t  esp32cam_yamcs_buffer;
   uint8_t  esp32cam_serial_buffer;
   bool     separation_sts:1;        // 7
-  bool     pressure_current:1;      //  6
-  bool     motion_current:1;        //   5
-  bool     gps_current:1;           //    4
-  bool     camera_current:1;        //     3
+  bool     pressure_active:1;      //  6
+  bool     motion_active:1;        //   5
+  bool     gps_active:1;           //    4
+  bool     camera_active:1;        //     3
   bool     serial_connected:1;      //      2
   bool     esp32_wifi_connected:1;  //       1 
   bool     esp32cam_wifi_connected:1; //        0
@@ -460,6 +467,8 @@ struct __attribute__ ((packed)) tm_timer_t { // APID: 51 (33)
   uint16_t  ota_duration;
   uint16_t  ftp_duration;
   uint16_t  wifi_duration;
+  uint16_t  tc_duration;
+  uint16_t  idle_duration;
   uint16_t  publish_fs_duration;
   uint16_t  publish_serial_duration;
   uint16_t  publish_yamcs_duration;
@@ -490,15 +499,17 @@ struct __attribute__ ((packed)) var_timer_t {
 }; 
 
 struct __attribute__ ((packed)) tc_esp32_t { // APID: 52 (34)
-  uint8_t  cmd;
-  char     json[JSON_MAX_SIZE];
-  uint8_t  json_size;
+  uint8_t  cmd_id;
+  uint8_t  int_parameter;
+  char     str_parameter[JSON_MAX_SIZE];
+  uint16_t str_parameter_size;
 }; 
 
 struct __attribute__ ((packed)) tc_esp32cam_t { // APID: 53 (35)
-  uint8_t  cmd;
-  char     json[JSON_MAX_SIZE];
-  uint8_t  json_size;
+  uint8_t  cmd_id;
+  uint8_t  int_parameter;
+  char     str_parameter[JSON_MAX_SIZE];
+  uint16_t str_parameter_size;
 }; 
 
 struct __attribute__ ((packed)) config_network_t {
@@ -560,7 +571,7 @@ struct __attribute__ ((packed)) config_esp32cam_t {
   bool     sd_enable:1;               
   bool     sd_json_enable:1;        
   bool     sd_ccsds_enable:1;       
-  bool     sd_image_enable:1;       
+  bool     sd_image_enable:1;  
   bool     serial_format:1;         
   bool     yamcs_protocol:1;            
   bool     debug_over_serial:1;
@@ -608,8 +619,6 @@ extern tc_esp32_t*        tc_other;
 extern config_esp32cam_t* config_this;
 #endif
 
-extern FtpServer ftpSrv; 
-
 extern char buffer[JSON_MAX_SIZE];
 #ifdef PLATFORM_ESP32
 extern char radio_buffer[2*(sizeof(tm_radio_t)+2)];
@@ -618,14 +627,18 @@ extern char radio_buffer[2*(sizeof(tm_radio_t)+2)];
 // FS FUNCTIONALITY
 extern bool fs_setup ();
 extern bool ftp_setup ();
+extern bool ftp_check ();
 extern uint16_t fs_free ();
+#ifdef PLATFORM_ESP32CAM
+extern uint16_t sd_free ();
+#endif
 
 // CONFIGURATION FUNCTIONALITY
 extern void load_default_config ();
 extern bool fs_load_settings ();
-extern bool fs_load_config ();
-extern bool fs_load_routing ();
-String set_routing (char* routing_table, char* routing_string);
+extern bool fs_load_config (const char* filename);
+extern bool fs_load_routing (const char* filename);
+extern String set_routing (char* routing_table, const char* routing_string);
 	
 // WIFI FUNCTIONALITY
 extern bool wifi_setup ();
@@ -634,24 +647,33 @@ extern bool wifi_sta_setup ();
 extern bool wifi_check ();
 extern bool time_check ();
 
-// TM/TC FUNCTIONALITY
+// TM FUNCTIONALITY
 extern void publish_packet (uint8_t PID);
 extern void publish_event (uint8_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message);
-extern void publish_tc (uint8_t PID, uint8_t cmd, char* json);
+extern void publish_tc (uint8_t PID, uint8_t cmd, const char* json);
 extern bool publish_fs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
 extern bool publish_serial (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
 extern bool publish_yamcs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
 extern bool publish_udp_packet (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
-extern bool publish_udp_text (char* message);
+extern bool publish_udp_text (const char* message);
 #ifdef PLATFORM_ESP32CAM
 extern bool publish_sd_ccsds (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
 extern bool publish_sd_json (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len);
-extern uint16_t sd_free ();
 #endif
 
+// TC FUNCTIONALITY
+extern bool yamcs_tc_setup ();
+#ifndef ASYNCUDP
+extern bool yamcs_tc_check ();
+#endif
+extern void parse_ccsds_command (ccsds_tc_t* ccsds_tc_ptr);
+extern void parse_json_command (const char* json_string);
+
+// CCSDS FUNCTIONALITY
 extern uint16_t get_ccsds_len (ccsds_t* ccsds_ptr);
 extern uint32_t get_ccsds_millis (ccsds_t* ccsds_ptr);
 extern uint16_t get_ccsds_packet_ctr (ccsds_t* ccsds_ptr);
+extern uint16_t get_ccsds_apid (ccsds_t* ccsds_ptr);
 extern void update_ccsds_hdr (uint8_t PID, bool pkt_type, uint16_t pkt_len);
 extern void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr);
 
@@ -673,16 +695,16 @@ extern void serial_parse_json ();
 extern void serial_parse_ccsds (uint16_t data_len);
 
 // COMMANDS
-extern bool cmd_reboot ();
-extern bool cmd_reboot_fli3d ();
-extern bool cmd_get_packet (char* json_str);
-extern bool cmd_set_opsmode (char* json_str);
-extern bool cmd_set_parameter (char* json_str);
-extern bool cmd_set_routing (char* json_str);
+extern bool cmd_reboot (uint8_t subsystem);
+extern bool cmd_set_opsmode (uint8_t opsmode);
+extern bool cmd_load_configuration (const char* filename);
+extern bool cmd_load_routing (const char* filename);
+extern bool cmd_set_parameter (const char* parameter, const char* value);
 
 // SUPPORT FUNCTIONS
 extern uint8_t id_of (const char* string, uint8_t string_len, const char* array_of_strings, uint16_t array_len);
 extern void build_hex_str (unsigned char * in, size_t insz, char * out, size_t outsz);
+extern String get_hex_str (char* blob, uint16_t length);
 extern void Serial_print_charptr (char *ptr, uint8_t len); // TODO: is debug function, to remove
 
 #endif // _FLI3D_H_
