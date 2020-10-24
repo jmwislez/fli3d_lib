@@ -710,7 +710,8 @@ bool wifi_setup () {
   if (config_this->wifi_yamcs_enable) {
     return_wifi_yamcs = yamcs_tc_setup ();
   }
-  return (return_wifi_ap and return_wifi_sta and return_wifi_yamcs);
+  tm_this->wifi_enabled = (return_wifi_ap and return_wifi_sta and return_wifi_yamcs);
+  return (tm_this->wifi_enabled);
 }
 
 bool wifi_ap_setup () {
@@ -1335,7 +1336,7 @@ void reset_packet (uint8_t PID) {
                          esp32.camera_active = false;
                          esp32.fs_active = false;
                          esp32.ftp_active = false;
-                         esp32.ota_active = false;
+                         esp32.ota_enabled = false;
                          break;
     case TM_GPS:         esp32.gps_rate++;
                          esp32.gps_active = true; 
@@ -1397,7 +1398,7 @@ void reset_packet (uint8_t PID) {
                          esp32cam.fs_active = false;
                          esp32cam.sd_active = false;
                          esp32cam.ftp_active = false;
-                         esp32cam.ota_active = false;
+                         esp32cam.ota_enabled = false;
                          break;
     case TM_CAMERA:      strcpy (ov2640.filename, "");
                          ov2640.filesize = 0;
@@ -1559,7 +1560,7 @@ void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) {
                                     esp32_ptr->radio_rate, esp32_ptr->pressure_rate, esp32_ptr->motion_rate, esp32_ptr->gps_rate, esp32_ptr->camera_rate, esp32_ptr->udp_rate, esp32_ptr->yamcs_rate, esp32_ptr->serial_in_rate, esp32_ptr->serial_out_rate, esp32_ptr->fs_rate, 
                                     esp32_ptr->separation_sts,
                                     esp32_ptr->radio_enabled, esp32_ptr->pressure_enabled, esp32_ptr->motion_enabled, esp32_ptr->gps_enabled, esp32_ptr->camera_enabled, esp32_ptr->wifi_enabled, esp32_ptr->wifi_udp_enabled, esp32_ptr->wifi_yamcs_enabled, esp32_ptr->fs_enabled, esp32_ptr->fs_ftp_enabled, esp32_ptr->time_set,
-                                    esp32_ptr->radio_active, esp32_ptr->pressure_active, esp32_ptr->motion_active, esp32_ptr->gps_active, esp32_ptr->camera_active, esp32_ptr->fs_active, esp32_ptr->ftp_active, esp32_ptr->ota_active,
+                                    esp32_ptr->radio_active, esp32_ptr->pressure_active, esp32_ptr->motion_active, esp32_ptr->gps_active, esp32_ptr->camera_active, esp32_ptr->fs_active, esp32_ptr->ftp_active, esp32_ptr->ota_enabled,
                                     esp32_ptr->serial_connected, esp32_ptr->wifi_connected, esp32_ptr->warn_serial_connloss, esp32_ptr->warn_wifi_connloss, esp32_ptr->err_serial_dataloss, esp32_ptr->err_yamcs_dataloss, esp32_ptr->err_fs_dataloss); 
                          }
                          break;
@@ -1572,7 +1573,7 @@ void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) {
                                     esp32cam_ptr->yamcs_buffer, esp32cam_ptr->serial_buffer, 
                                     esp32cam_ptr->camera_image_rate, esp32cam_ptr->udp_rate, esp32cam_ptr->yamcs_rate, esp32cam_ptr->serial_in_rate, esp32cam_ptr->serial_out_rate, esp32cam_ptr->fs_rate, esp32cam_ptr->sd_json_rate, esp32cam_ptr->sd_ccsds_rate, esp32cam_ptr->sd_image_rate,  
                                     esp32cam_ptr->camera_enabled, esp32cam_ptr->wifi_enabled, esp32cam_ptr->wifi_udp_enabled, esp32cam_ptr->wifi_yamcs_enabled, esp32cam_ptr->wifi_image_enabled, esp32cam_ptr->fs_enabled, esp32cam_ptr->fs_ftp_enabled, esp32cam_ptr->time_set, esp32cam_ptr->sd_enabled, esp32cam_ptr->sd_image_enabled, esp32cam_ptr->sd_json_enabled, esp32cam_ptr->sd_ccsds_enabled,
-                                    esp32cam_ptr->camera_active, esp32cam_ptr->fs_active, esp32cam_ptr->sd_active, esp32cam_ptr->ftp_active, esp32cam_ptr->ota_active,
+                                    esp32cam_ptr->camera_active, esp32cam_ptr->fs_active, esp32cam_ptr->sd_active, esp32cam_ptr->ftp_active, esp32cam_ptr->ota_enabled,
                                     esp32cam_ptr->serial_connected, esp32cam_ptr->wifi_connected, esp32cam_ptr->warn_serial_connloss, esp32cam_ptr->warn_wifi_connloss, esp32cam_ptr->err_serial_dataloss, esp32cam_ptr->err_yamcs_dataloss, esp32cam_ptr->err_fs_dataloss); 
                          }
                          break;
@@ -1646,7 +1647,7 @@ void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) {
                              json_buffer += sprintf (json_buffer, ",\"str_val\":\"%s\"", tc_esp32_ptr->str_parameter);
                            }
                            if (tc_esp32_ptr->cmd_id-42 == TC_SET_PARAMETER) {
-                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32_ptr->str_parameter, tc_esp32_ptr->str_parameter); // TODO: value
+                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32_ptr->str_parameter, (char*)(&tc_esp32_ptr->str_parameter+strlen(tc_esp32_ptr->str_parameter)+1)); // TODO: value
                            }
                            *json_buffer++ = '}';
                            *json_buffer++ = 0;
@@ -1733,7 +1734,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32cam.fs_active = (obj["act"][1] == '1')?1:0;           
                         esp32cam.sd_active = (obj["act"][2] == '1')?1:0;           
                         esp32cam.ftp_active = (obj["act"][3] == '1')?1:0;           
-                        esp32cam.ota_active = (obj["act"][4] == '1')?1:0;           
+                        esp32cam.ota_enabled = (obj["act"][4] == '1')?1:0;           
                         publish_packet (TM_ESP32CAM);
                         break;                                                                                                                          
     case TM_CAMERA:     // {\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}
@@ -1863,7 +1864,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32.fs_active = (obj["act"][5] == '1')?1:0;           
                         esp32.sd_active = (obj["act"][6] == '1')?1:0;           
                         esp32.ftp_active = (obj["act"][7] == '1')?1:0;           
-                        esp32.ota_active = (obj["act"][8] == '1')?1:0;  
+                        esp32.ota_enabled = (obj["act"][8] == '1')?1:0;  
                         publish_packet (TM_ESP32);
                         break;
     case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%.6f,%.6f,%.2f],\"zero\":[%.6f,%.6f,%.2f],\"xyz\":[%d,%d,%d],\"v\":[%.2f,%.2f,%.2f],\"dop\":{\"h\":%d.%03d,\"v\":%d.%03d},\"valid\":\"%d%d%d%d%d%d\"}
@@ -2044,10 +2045,10 @@ void publish_radio () {
   }
 }
 
-// SERIAL FUNCTIONALITY  // TODO: code review and cleanup
+// SERIAL FUNCTIONALITY
 
 uint16_t serial_check () {
-  // gets characters from Serial, puts them in serial_buffer, and returns length of string that is ready for processing or false if string is not complete
+  // gets data from Serial, put it in serial_buffer, and return length of string that is ready for processing or false if string is not complete
   static uint8_t serial_status;
   static uint16_t data_len;
   static uint8_t pkt_apid;
@@ -2061,17 +2062,17 @@ uint16_t serial_check () {
       switch (c) {
         case 0x00:
         case 0x01: // start of CCSDS transmission
-                   Serial.println ("Start of CCSDS transmission");
+                   Serial.println ("DEBUG: Start of CCSDS transmission");
                    serial_status = SERIAL_CCSDS;
                    data_len = JSON_MAX_SIZE;
                    break;
-        case '[':  // start of JSON-encoded data string
-                   Serial.println ("Start of JSON transmission");
+        case '[':  // start of JSON-encoded data string (with a timestamp preamble [])
+                   Serial.println ("DEBUG: Start of JSON or ASCII transmission");
                    serial_status = SERIAL_JSON;
                    break;
         case 'O':  
         case 'o':  // keepalive or ASCII
-                   Serial.println ("Start of KEEPALIVE transmission");
+                   Serial.println ("DEBUG: Start of KEEPALIVE or ASCII transmission");
                    serial_status = SERIAL_KEEPALIVE;
                    break;
         default:   // ASCII
@@ -2081,22 +2082,28 @@ uint16_t serial_check () {
       }
     }
     if (serial_status == SERIAL_CCSDS) {
-      switch (serial_buffer_pos-1) {
-        case 1:         pkt_apid = (uint8_t)(c); 
-                        break;
-        case 5:         data_len = min ((uint16_t)(serial_buffer[4] << 8) + (uint16_t)(serial_buffer[5]) + 6, JSON_MAX_SIZE); 
-                        break;
-        default:        if (serial_buffer_pos-1 == data_len) {
-                          // CCSDS packet is complete
-                          Serial.println ("CCSDS packet complete");
-                          if (!tm_this->serial_connected) { announce_established_serial_connection (); }
-                          tm_this->serial_in_rate++;
-                          serial_status = SERIAL_COMPLETE;
-                          serial_buffer_pos = 0;
-                          return (data_len);
-                        }
-                        // happily build up CCSDS blob
-                        break;
+      if (serial_buffer_pos == 5) { // CCSDS header should be in, we can check whether it's valid
+        if (valid_ccsds_hdr ((ccsds_t*)&serial_buffer, PKT_TM) or valid_ccsds_hdr ((ccsds_t*)&serial_buffer, PKT_TC)) {
+          data_len = get_ccsds_len ((ccsds_t*)&serial_buffer) + sizeof(ccsds_hdr_t);
+        }
+        else {
+          sprintf (buffer, "Received packet over serial with invalid CCSDS header (%s...)", get_hex_str ((char*)serial_buffer, 6).c_str());
+          publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
+          serial_buffer_pos = 0;
+          serial_status = SERIAL_UNKNOWN;
+          return false;
+        }
+      }
+      if (serial_buffer_pos == data_len) { // CCSDS packet is complete               
+        Serial.println ("DEBUG: CCSDS packet complete");
+        if (!tm_this->serial_connected) { 
+          tm_this->serial_connected = true;
+          tm_this->warn_serial_connloss = false; 
+        }
+        tm_this->serial_in_rate++;
+        serial_status = SERIAL_COMPLETE;
+        serial_buffer_pos = 0;
+        return (data_len);              
       }
     }
     else { // normal ASCII encoded transmission (JSON, SERIAL, KEEPALIVE)
@@ -2105,7 +2112,10 @@ uint16_t serial_check () {
                     if (serial_status == SERIAL_KEEPALIVE) {
                       switch (serial_buffer[0]) {
                         case 'O': // keep-alive confirming good connection by counterpart
-                                  if (!tm_this->serial_connected) { announce_established_serial_connection (); }
+                                  if (!tm_this->serial_connected) {
+                                    tm_this->serial_connected = true;
+                                    tm_this->warn_serial_connloss = false; 
+                                  }
                                   break;
                         case 'o': // keep-alive indicating counterpart not receiving over serial
                                   if (!config_this->debug_over_serial and tm_this->serial_connected) {
@@ -2114,19 +2124,19 @@ uint16_t serial_check () {
                                   }
                                   break;
                       }
-                      Serial.println ("KEEPALIVE transmission completed");
+                      Serial.println ("DEBUG: KEEPALIVE transmission completed");
                       serial_status = SERIAL_COMPLETE;
                       serial_buffer_pos = 0;
                       return false;
                     }
-                    else {
+                    else { // ASCII/JSON transmission complete
                       serial_buffer[serial_buffer_pos-1] = 0x00;
-                      if (!tm_this->serial_connected) { announce_established_serial_connection (); }
+                      if (!tm_this->serial_connected) { 
+                        tm_this->serial_connected = true;
+                        tm_this->warn_serial_connloss = false; 
+                      }
                       tm_this->serial_in_rate++;
-                      Serial.print ("ASCII/JSON transmission completed: [");
-                      Serial.print (strlen(serial_buffer));
-                      Serial.print ("] ");
-                      Serial.println (serial_buffer);
+                      Serial.print (String("DEBUG: ASCII/JSON transmission completed: [") + strlen(serial_buffer) + "] " + serial_buffer);
                       serial_status = SERIAL_COMPLETE;
                       serial_buffer_pos = 0;
                       return (strlen(serial_buffer));
@@ -2138,6 +2148,7 @@ uint16_t serial_check () {
                     }
                     else {
                       // received line feed but not after carriage return, don't know what this is ...
+                      serial_buffer_pos = 0;
                       serial_status = SERIAL_UNKNOWN;
                       sprintf (buffer, "Received CR without LF from %s", subsystemName[SS_OTHER]);
                       publish_event (STS_THIS, SS_OTHER, EVENT_WARNING, buffer);                    
@@ -2151,7 +2162,7 @@ uint16_t serial_check () {
                     break;  
       }
     }
-    if (serial_buffer_pos == JSON_MAX_SIZE) { // something is wrong: line too long // TODO: overall assessment of maximal buffer sizes
+    if (serial_buffer_pos == JSON_MAX_SIZE) { // something is wrong: line too long
       serial_buffer[JSON_MAX_SIZE-1] = '\0';
       serial_buffer_pos = 0;
       Serial.println (get_hex_str ((char*)&serial_buffer, JSON_MAX_SIZE));
@@ -2160,25 +2171,15 @@ uint16_t serial_check () {
       }
       sprintf (buffer, "Received too long message from %s", subsystemName[SS_OTHER]);
       publish_event (STS_THIS, SS_OTHER, EVENT_ERROR, buffer);
+      Serial.println (String("DEBUG: too long message on Serial: ") + serial_buffer);
       serial_status = SERIAL_UNKNOWN;
       return false; // invalid serial_buffer content, do not use
     }
   } // while Serial.available
-  return false; // no more serial characters waiting
+  return false; // no serial data ready
 }
 
-void announce_established_serial_connection () {
-  tm_this->serial_connected = true;
-  sprintf (buffer, "Established serial connection to %s", subsystemName[SS_OTHER]);
-  publish_event (STS_THIS, SS_OTHER, EVENT_INIT, buffer);
-} 
-
-void announce_lost_serial_connection () {
-  tm_this->serial_connected = false;
-  tm_this->warn_serial_connloss = true;
-}
-
-void serial_parse (uint16_t data_len) {
+void serial_parse () {
   if (serial_buffer[0] == '[') {
     // JSON formatted message
     parse_json ((char*)&serial_buffer);

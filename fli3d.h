@@ -291,7 +291,7 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool     camera_active:1;         //     3
   bool     fs_active:1;             //      2
   bool     ftp_active:1;            //       1
-  bool     ota_active:1;            //        0 
+  bool     ota_enabled:1;            //        0 
 };
 
 struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
@@ -343,7 +343,7 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool     fs_active:1;             //  6
   bool     sd_active:1;             //   5
   bool     ftp_active:1;            //    4
-  bool     ota_active:1;            //     3
+  bool     ota_enabled:1;            //     3
   bool     free_42:1;               //      2 - free to assign 
   bool     free_41:1;               //       1 - free to assign 
   bool     free_40:1;               //        0 - free to assign 
@@ -708,9 +708,7 @@ extern void publish_radio ();
 
 // SERIAL FUNCTIONALITY
 extern uint16_t serial_check ();
-extern void announce_established_serial_connection ();
-extern void announce_lost_serial_connection ();
-extern void serial_parse (uint16_t data_len);
+extern void serial_parse ();
 
 // COMMANDS
 extern bool cmd_reboot (uint8_t subsystem);
