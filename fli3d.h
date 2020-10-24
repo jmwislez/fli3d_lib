@@ -31,7 +31,7 @@
 #include "FS.h"
 
 #define SerialBaud                115200
-#define JSON_MAX_SIZE             250
+#define JSON_MAX_SIZE             512
 #define WIFI_TIMEOUT              120    // s
 #define NTP_TIMEOUT               60     // s
 #define WIFI_POLL                 5      // s
@@ -173,7 +173,7 @@ extern const char commLineName[9][13];
 
 #define TC_REBOOT              42
 #define TC_SET_OPSMODE         43
-#define TC_LOAD_CONFIGURATION  44
+#define TC_LOAD_CONFIG         44
 #define TC_LOAD_ROUTING        45
 #define TC_SET_PARAMETER       46
 extern const char tcName[5][20];
@@ -698,7 +698,7 @@ extern void parse_ccsds (ccsds_t* ccsds_ptr);
 
 // JSON FUNCTIONALITY
 extern void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr);
-extern void parse_json (const char* json_string);
+extern bool parse_json (const char* json_string);
 
 // RADIO FUNCTIONALITY
 #ifdef PLATFORM_ESP32
@@ -718,9 +718,11 @@ extern bool cmd_set_opsmode (uint8_t opsmode);
 extern bool cmd_load_config (const char* filename);
 extern bool cmd_load_routing (const char* filename);
 extern bool cmd_set_parameter (const char* parameter, const char* value);
+extern bool cmd_toggle_routing (uint8_t PID, const char interface);
 
 // SUPPORT FUNCTIONS
 extern uint8_t id_of (const char* string, uint8_t string_len, const char* array_of_strings, uint16_t array_len);
 extern String get_hex_str (char* blob, uint16_t length);
+extern void hex_to_bin (byte* destination, char* hex_input);
 
 #endif // _FLI3D_H_

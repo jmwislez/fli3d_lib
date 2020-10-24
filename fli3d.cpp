@@ -386,7 +386,7 @@ bool fs_load_config (const char* filename) {
     if (linebuffer[i] != '\r') { // ignore \r
       if (linebuffer[i] == '\n' or !file.available()) { // full line read
         linebuffer[i] = 0; // mark end of c string
-        if (set_parameter (String(linebuffer).substring(0, value_start-2).c_str(), String(linebuffer).substring(value_start).c_str())) {
+        if (set_parameter (String(linebuffer).substring(0, value_start-1).c_str(), String(linebuffer).substring(value_start).c_str())) {
           Serial.println (buffer);
         }
         i = 0;
@@ -1165,7 +1165,7 @@ bool publish_sd_json (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uin
 #ifdef ASYNCUDP
 bool yamcs_tc_setup () {
   if (asyncUDP_yamcs_tc.listen(config_network.yamcs_tc_port)) {
-    sprintf (buffer, "Listening for commands on UDP port %s:%u (async)", WiFi.localIP().toString().c_str(), config_network.yamcs_tc_port);
+    sprintf (buffer, "Listening for CCSDS commands on UDP port %s:%u (async)", WiFi.localIP().toString().c_str(), config_network.yamcs_tc_port);
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
     asyncUDP_yamcs_tc.onPacket([](AsyncUDPPacket packet) {  
       memcpy (&ccsds_tc_buffer, packet.data(), packet.length());
@@ -1230,7 +1230,7 @@ uint16_t update_packet (uint8_t PID) {
                          break;
     case TM_PRESSURE:    packet_ctr = ++bmp280.packet_ctr;
                          break;
-    case TM_RADIO:       radio.millis = millis(); // TODO: (radio_*_active to be set elsewhere)
+    case TM_RADIO:       radio.millis = millis(); 
                          packet_ctr = ++radio.packet_ctr;
                          radio.opsmode = esp32.opsmode;                  
                          radio.error_ctr = esp32.error_ctr + esp32cam.error_ctr;
@@ -1507,7 +1507,7 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
                              case TC_SET_OPSMODE:        cmd_set_opsmode (tc_this->int_parameter);
                                                          break;
                              #endif
-                             case TC_LOAD_CONFIGURATION: cmd_load_config ((const char*)tc_this->str_parameter);
+                             case TC_LOAD_CONFIG:        cmd_load_config ((const char*)tc_this->str_parameter);
                                                          break;                                                       
                              case TC_LOAD_ROUTING:       cmd_load_routing ((const char*)tc_this->str_parameter); 
                                                          break;
@@ -1535,39 +1535,50 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
 
 // JSON FUNCTIONALITY
 
-void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) { // TODO: update once TM definition final, and cleanup
+void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) {
   switch (PID) {
     case STS_ESP32:      { 
                            sts_esp32_t* sts_esp32_ptr = (sts_esp32_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", sts_esp32_ptr->packet_ctr, eventName[sts_esp32_ptr->type], subsystemName[sts_esp32_ptr->subsystem], sts_esp32_ptr->message);
+                           sprintf (json_buffer, "{\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", 
+                             sts_esp32_ptr->packet_ctr, eventName[sts_esp32_ptr->type], subsystemName[sts_esp32_ptr->subsystem], sts_esp32_ptr->message);
                          }
                          break;
     case STS_ESP32CAM:   { 
                            sts_esp32cam_t* sts_esp32cam_ptr = (sts_esp32cam_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", sts_esp32cam_ptr->packet_ctr, eventName[sts_esp32cam_ptr->type], subsystemName[sts_esp32cam_ptr->subsystem], sts_esp32cam_ptr->message);
+                           sprintf (json_buffer, "{\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", 
+                             sts_esp32cam_ptr->packet_ctr, eventName[sts_esp32cam_ptr->type], subsystemName[sts_esp32cam_ptr->subsystem], sts_esp32cam_ptr->message);
                          }
                          break;                  
     case TM_ESP32:       {
                            tm_esp32_t* esp32_ptr = (tm_esp32_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"opsmode\":\"%s\",\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"fs_free\":%u,\"press_rate\":%u,\"motion_rate\":%u,\"cam_rate\":%u,\"gps_rate\":%u,\"radio_rate\":%u,\"sep_sts\":%d,\"enabled\":\"%d%d%d%d%d%d%d%d\",\"current\":\"%d%d%d%d%d\",\"conn\":\"%d%d\"}", 
-                                    esp32_ptr->packet_ctr, modeName[esp32_ptr->opsmode], esp32_ptr->error_ctr, esp32_ptr->warning_ctr, esp32_ptr->mem_free, esp32_ptr->fs_free, esp32_ptr->pressure_rate, esp32_ptr->motion_rate, esp32_ptr->camera_rate, esp32_ptr->gps_rate, esp32_ptr->radio_rate, esp32_ptr->separation_sts,
-                                    esp32_ptr->radio_enabled, esp32_ptr->pressure_enabled, esp32_ptr->motion_enabled, esp32_ptr->gps_enabled, esp32_ptr->camera_enabled, esp32_ptr->wifi_enabled, esp32_ptr->wifi_udp_enabled, esp32_ptr->wifi_yamcs_enabled, 
-                                    esp32_ptr->radio_active, esp32_ptr->pressure_active, esp32_ptr->motion_active, esp32_ptr->gps_active, esp32_ptr->camera_active,
-                                    esp32_ptr->serial_connected, esp32_ptr->wifi_connected); 
+                           sprintf (json_buffer, "{\"ctr\":%u,\"mode\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u],\"buf\":[%u,%u],\"inst_rate\":[%u,%u,%u,%u,%u],\"comm_rate\":[%u,%u,%u,%u,%u],\"sep\":%d,\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}", 
+                                    esp32_ptr->packet_ctr, modeName[esp32_ptr->opsmode], esp32_ptr->error_ctr, esp32_ptr->warning_ctr, 
+                                    esp32_ptr->tc_exec_ctr, esp32_ptr->tc_fail_ctr,
+                                    esp32_ptr->mem_free, esp32_ptr->fs_free, 
+                                    esp32_ptr->yamcs_buffer, esp32_ptr->serial_buffer, 
+                                    esp32_ptr->radio_rate, esp32_ptr->pressure_rate, esp32_ptr->motion_rate, esp32_ptr->gps_rate, esp32_ptr->camera_rate, esp32_ptr->udp_rate, esp32_ptr->yamcs_rate, esp32_ptr->serial_in_rate, esp32_ptr->serial_out_rate, esp32_ptr->fs_rate, 
+                                    esp32_ptr->separation_sts,
+                                    esp32_ptr->radio_enabled, esp32_ptr->pressure_enabled, esp32_ptr->motion_enabled, esp32_ptr->gps_enabled, esp32_ptr->camera_enabled, esp32_ptr->wifi_enabled, esp32_ptr->wifi_udp_enabled, esp32_ptr->wifi_yamcs_enabled, esp32_ptr->fs_enabled, esp32_ptr->fs_ftp_enabled, esp32_ptr->time_set,
+                                    esp32_ptr->radio_active, esp32_ptr->pressure_active, esp32_ptr->motion_active, esp32_ptr->gps_active, esp32_ptr->camera_active, esp32_ptr->fs_active, esp32_ptr->ftp_active, esp32_ptr->ota_active,
+                                    esp32_ptr->serial_connected, esp32_ptr->wifi_connected, esp32_ptr->warn_serial_connloss, esp32_ptr->warn_wifi_connloss, esp32_ptr->err_serial_dataloss, esp32_ptr->err_yamcs_dataloss, esp32_ptr->err_fs_dataloss); 
                          }
                          break;
     case TM_ESP32CAM:    {
                            tm_esp32cam_t* esp32cam_ptr = (tm_esp32cam_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"fs_free\":%u,\"sd_free\":%u,\"img_rate\":%u,\"enabled\":\"%d%d%d%d%d%d%d%d%d\",\"current\":\"%d%d\",\"connected\":\"%d%d\"}",
-                                    esp32cam_ptr->packet_ctr, esp32cam_ptr->error_ctr, esp32cam_ptr->warning_ctr, esp32cam_ptr->mem_free, esp32cam_ptr->fs_free, esp32cam_ptr->sd_free, esp32cam_ptr->camera_image_rate, 
-                                    esp32cam_ptr->wifi_enabled, esp32cam_ptr->wifi_udp_enabled, esp32cam_ptr->wifi_yamcs_enabled, esp32cam_ptr->wifi_image_enabled, esp32cam_ptr->camera_enabled, esp32cam_ptr->sd_enabled, esp32cam_ptr->sd_image_enabled, esp32cam_ptr->sd_json_enabled, esp32cam_ptr->sd_ccsds_enabled,  
-                                    esp32cam_ptr->sd_active, esp32cam_ptr->camera_active,
-                                    esp32cam_ptr->serial_connected, esp32cam_ptr->wifi_connected);
+                           sprintf (json_buffer, "{\"ctr\":%u,\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u,%u],\"buf\":[%u,%u],\"rate\":[%u,%u,%u,%u,%u,%u,%u,%u,%u],\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}", 
+                                    esp32cam_ptr->packet_ctr, esp32cam_ptr->error_ctr, esp32cam_ptr->warning_ctr, 
+                                    esp32cam_ptr->tc_exec_ctr, esp32cam_ptr->tc_fail_ctr,
+                                    esp32cam_ptr->mem_free, esp32cam_ptr->fs_free, esp32cam_ptr->sd_free, 
+                                    esp32cam_ptr->yamcs_buffer, esp32cam_ptr->serial_buffer, 
+                                    esp32cam_ptr->camera_image_rate, esp32cam_ptr->udp_rate, esp32cam_ptr->yamcs_rate, esp32cam_ptr->serial_in_rate, esp32cam_ptr->serial_out_rate, esp32cam_ptr->fs_rate, esp32cam_ptr->sd_json_rate, esp32cam_ptr->sd_ccsds_rate, esp32cam_ptr->sd_image_rate,  
+                                    esp32cam_ptr->camera_enabled, esp32cam_ptr->wifi_enabled, esp32cam_ptr->wifi_udp_enabled, esp32cam_ptr->wifi_yamcs_enabled, esp32cam_ptr->wifi_image_enabled, esp32cam_ptr->fs_enabled, esp32cam_ptr->fs_ftp_enabled, esp32cam_ptr->time_set, esp32cam_ptr->sd_enabled, esp32cam_ptr->sd_image_enabled, esp32cam_ptr->sd_json_enabled, esp32cam_ptr->sd_ccsds_enabled,
+                                    esp32cam_ptr->camera_active, esp32cam_ptr->fs_active, esp32cam_ptr->sd_active, esp32cam_ptr->ftp_active, esp32cam_ptr->ota_active,
+                                    esp32cam_ptr->serial_connected, esp32cam_ptr->wifi_connected, esp32cam_ptr->warn_serial_connloss, esp32cam_ptr->warn_wifi_connloss, esp32cam_ptr->err_serial_dataloss, esp32cam_ptr->err_yamcs_dataloss, esp32cam_ptr->err_fs_dataloss); 
                          }
                          break;
     case TM_CAMERA:      {
                            tm_camera_t* ov2640_ptr = (tm_camera_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"exp\":%u,\"sd\":%u,\"wifi\":%u}", 
+                           sprintf (json_buffer, "{\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}", 
                                     ov2640_ptr->packet_ctr, cameraModeName[ov2640_ptr->camera_mode], cameraResolutionName[ov2640_ptr->resolution], ov2640_ptr->auto_res, ov2640_ptr->filename, ov2640_ptr->filesize, ov2640_ptr->exposure_ms, ov2640_ptr->sd_ms, ov2640_ptr->wifi_ms);
                          }
                          break;
@@ -1578,34 +1589,35 @@ void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) { // TO
                            if (neo6mv2_ptr->time_valid) {
                              json_buffer += sprintf (json_buffer, ",\"time\":\"%02d:%02d:%02d\"", neo6mv2_ptr->hours, neo6mv2_ptr->minutes, neo6mv2_ptr->seconds);
                            }
-                           if (neo6mv2_ptr->location_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"lat\":%.6f,\"lon\":%.6f", neo6mv2_ptr->latitude, neo6mv2_ptr->longitude);
-                           }
-                           if (neo6mv2_ptr->altitude_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"alt\":%.2f", neo6mv2_ptr->altitude);
+                           if (neo6mv2_ptr->location_valid and neo6mv2_ptr->altitude_valid) {
+                             json_buffer += sprintf (json_buffer, ",\"loc\":[%.6f,%.6f,%.2f]", neo6mv2_ptr->latitude, neo6mv2_ptr->longitude, neo6mv2_ptr->altitude);
+                             json_buffer += sprintf (json_buffer, ",\"zero\":[%.6f,%.6f,%.2f]", neo6mv2_ptr->latitude_zero, neo6mv2_ptr->longitude_zero, neo6mv2_ptr->altitude_zero);
+                             json_buffer += sprintf (json_buffer, ",\"xyz\":[%d,%d,%d]", neo6mv2_ptr->x, neo6mv2_ptr->y, neo6mv2_ptr->z);
                            }
                            if (neo6mv2_ptr->speed_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"v_north\":%.2f,\"v_east\":%.2f,\"v_down\":%.2f", neo6mv2_ptr->v_north, neo6mv2_ptr->v_east, neo6mv2_ptr->v_down);
+                             json_buffer += sprintf (json_buffer, ",\"v\":[%.2f,%.2f,%.2f]", neo6mv2_ptr->v_north, neo6mv2_ptr->v_east, neo6mv2_ptr->v_down);
                            }
-                           if (neo6mv2_ptr->hdop_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"hdop\":%d.%03d", neo6mv2_ptr->milli_hdop/1000, neo6mv2_ptr->milli_hdop%1000);
+                           if (neo6mv2_ptr->hdop_valid and neo6mv2_ptr->hdop_valid) {
+                             json_buffer += sprintf (json_buffer, ",\"dop\":{\"h\":%d.%03d,\"v\":%d.%03d}", neo6mv2_ptr->milli_hdop/1000, neo6mv2_ptr->milli_hdop%1000, neo6mv2_ptr->milli_vdop/1000, neo6mv2_ptr->milli_vdop%1000);
                            }
-                           if (neo6mv2_ptr->hdop_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"vdop\":%d.%03d", neo6mv2_ptr->milli_vdop/1000, neo6mv2_ptr->milli_vdop%1000);
-                           }
+                           json_buffer += sprintf (json_buffer, ",\"valid\":\"%d%d%d%d%d%d\"", neo6mv2_ptr->time_valid, neo6mv2_ptr->location_valid, neo6mv2_ptr->altitude_valid, neo6mv2_ptr->speed_valid, neo6mv2_ptr->hdop_valid, neo6mv2_ptr->vdop_valid);
                            *json_buffer++ = '}';
                            *json_buffer++ = 0;
                          }
                          break;
     case TM_MOTION:      {
                            tm_motion_t* mpu6050_ptr = (tm_motion_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"accel\":[\"X\":%.2f,\"Y\":%.2f,\"Z\":%.2f],\"gyro\":[\"X\":%.2f,\"Y\":%.2f,\"Z\":%.2f],\"tilt\":%.2f,\"g\":%.2f,\"a\":%.2f,\"rpm\":%.2f}", 
-                                    mpu6050_ptr->packet_ctr, mpu6050_ptr->accel_x_rocket, mpu6050_ptr->accel_y_rocket, mpu6050_ptr->accel_z_rocket, mpu6050_ptr->gyro_x_rocket, mpu6050_ptr->gyro_y_rocket, mpu6050_ptr->gyro_z_rocket, mpu6050_ptr->tilt, mpu6050_ptr->g, mpu6050_ptr->a, mpu6050_ptr->rpm); 
+                           sprintf (json_buffer, "{\"ctr\":%u,\"accel\":[%.2f,%.2f,%.2f],\"gyro\":[%.2f,%.2f,%.2f],\"tilt\":%.2f,\"g\":%.2f,\"a\":%.2f,\"rpm\":%.2f}", 
+                                    mpu6050_ptr->packet_ctr, 
+                                    mpu6050_ptr->accel_x_rocket, mpu6050_ptr->accel_y_rocket, mpu6050_ptr->accel_z_rocket, 
+                                    mpu6050_ptr->gyro_x_rocket, mpu6050_ptr->gyro_y_rocket, mpu6050_ptr->gyro_z_rocket, 
+                                    mpu6050_ptr->tilt, mpu6050_ptr->g, mpu6050_ptr->a, mpu6050_ptr->rpm); 
                          }
                          break;
     case TM_PRESSURE:    {
                            tm_pressure_t* bmp280_ptr = (tm_pressure_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f}", bmp280_ptr->packet_ctr, bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->altitude, bmp280_ptr->velocity_v);
+                           sprintf (json_buffer, "{\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f}", 
+                                    bmp280_ptr->packet_ctr, bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->altitude, bmp280_ptr->velocity_v);
                          }
                          break;
     case TM_RADIO:       {
@@ -1615,24 +1627,52 @@ void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) { // TO
                          break;
     case TM_TIMER:       {
                            tm_timer_t* timer_ptr = (tm_timer_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"radio\":%u,\"pressure\":%u,\"motion\":%u,\"gps\":%u,\"esp32cam\":%u}", 
-                                    timer_ptr->packet_ctr, timer_ptr->radio_duration, timer_ptr->pressure_duration, timer_ptr->motion_duration, timer_ptr->gps_duration, timer_ptr->esp32cam_duration);
+                           sprintf (json_buffer, "{\"ctr\":%u,\"idle\":%u,\"instr\":[%u,%u,%u,%u,%u],\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u]}", 
+                                    timer_ptr->packet_ctr, 
+                                    timer_ptr->idle_duration,
+                                    timer_ptr->radio_duration, timer_ptr->pressure_duration, timer_ptr->motion_duration, timer_ptr->gps_duration, timer_ptr->esp32cam_duration,
+                                    timer_ptr->serial_duration, timer_ptr->ota_duration, timer_ptr->ftp_duration, timer_ptr->wifi_duration, timer_ptr->tc_duration,
+                                    timer_ptr->publish_fs_duration, timer_ptr->publish_serial_duration, timer_ptr->publish_yamcs_duration, timer_ptr->publish_udp_duration);
                          }
                          break;
     case TC_ESP32:       {
                            tc_esp32_t* tc_esp32_ptr = (tc_esp32_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"cmd\":\"%s\",\"int\":%u,\"param\":\"%s\"}", tcName[tc_esp32_ptr->cmd_id-42], tc_esp32_ptr->int_parameter, tc_esp32_ptr->str_parameter);
-                         } // TODO: param can be multiple, or absent (not properly covered)
+                           *json_buffer++ = '{';
+                           json_buffer += sprintf (json_buffer, "\"cmd\":\"%s\"", tcName[tc_esp32_ptr->cmd_id-42]);
+                           if (tc_esp32_ptr->cmd_id-42 == TC_REBOOT or tc_esp32_ptr->cmd_id-42 == TC_SET_OPSMODE) {
+                             json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", tc_esp32_ptr->int_parameter);
+                           }
+                           if (tc_esp32_ptr->cmd_id-42 == TC_LOAD_CONFIG or tc_esp32_ptr->cmd_id-42 == TC_LOAD_ROUTING) {
+                             json_buffer += sprintf (json_buffer, ",\"str_val\":\"%s\"", tc_esp32_ptr->str_parameter);
+                           }
+                           if (tc_esp32_ptr->cmd_id-42 == TC_SET_PARAMETER) {
+                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32_ptr->str_parameter, tc_esp32_ptr->str_parameter); // TODO: value
+                           }
+                           *json_buffer++ = '}';
+                           *json_buffer++ = 0;
+                         }
                          break;
     case TC_ESP32CAM:    {
                            tc_esp32cam_t* tc_esp32cam_ptr = (tc_esp32cam_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"cmd\":\"%s\",\"int\":%u,\"param\":\"%s\"}", tcName[tc_esp32cam_ptr->cmd_id-42], tc_esp32cam_ptr->int_parameter, tc_esp32cam_ptr->str_parameter);
-                         } // TODO: param can be multiple, or absent (not properly covered)
+                           *json_buffer++ = '{';
+                           json_buffer += sprintf (json_buffer, "\"cmd\":\"%s\"", tcName[tc_esp32cam_ptr->cmd_id-42]);
+                           if (tc_esp32cam_ptr->cmd_id-42 == TC_REBOOT or tc_esp32cam_ptr->cmd_id-42 == TC_SET_OPSMODE) {
+                             json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", tc_esp32cam_ptr->int_parameter);
+                           }
+                           if (tc_esp32cam_ptr->cmd_id-42 == TC_LOAD_CONFIG or tc_esp32cam_ptr->cmd_id-42 == TC_LOAD_ROUTING) {
+                             json_buffer += sprintf (json_buffer, ",\"str_val\":\"%s\"", tc_esp32cam_ptr->str_parameter);
+                           }
+                           if (tc_esp32cam_ptr->cmd_id-42 == TC_SET_PARAMETER) {
+                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32cam_ptr->str_parameter, tc_esp32cam_ptr->str_parameter); // TODO: value
+                           }
+                           *json_buffer++ = '}';
+                           *json_buffer++ = 0;
+                         } 
                          break;  
   }
 }
 
-void parse_json (const char* json_string) { // TODO: cleanup
+bool parse_json (const char* json_string) { // TODO: maybe add millis as parameter somehow, take from str or take from current clock?
   static StaticJsonDocument<JSON_MAX_SIZE> obj;
   char * json_str = strchr (json_string, '{');
   char * tag_str = strchr (json_string, ' ') + 1;
@@ -1646,50 +1686,66 @@ void parse_json (const char* json_string) { // TODO: cleanup
                         sts_esp32cam.type = id_of ((const char*)obj["type"], sizeof(eventName[0]), (char*)&eventName, sizeof(eventName));
                         sts_esp32cam.subsystem = id_of ((const char*)obj["ss"], sizeof(subsystemName[0]), (char*)&subsystemName, sizeof(subsystemName));
                         strcpy (sts_esp32cam.message, obj["msg"]);
+                        sts_esp32cam.message_size = strlen (sts_esp32cam.message);
                         publish_packet (STS_ESP32CAM);
                         break;                        
-    case TM_ESP32CAM:   // {\"ctr\":%u,\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"sd_free\":%u,\"img_rate\":%u,\"enabled\":\"%d%d%d%d%d%d%d%d%d\",\"current\":\"%d%d\",\"connected\":\"%d%d\",\"debug\":\"%d%d%d%d\"}
+    case TM_ESP32CAM:   // {\"ctr\":%u,\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u,%u],\"buf\":[%u,%u],\"rate\":[%u,%u,%u,%u,%u,%u,%u,%u,%u],\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}
                         esp32cam.packet_ctr = obj["ctr"];
                         esp32cam.error_ctr = obj["err"];
                         esp32cam.warning_ctr = obj["warn"];
-                        //esp32cam.tc_exec_ctr
-                        //esp32cam.tc_fail_ctr
-                        esp32cam.mem_free = obj["mem_free"];
-                        esp32cam.fs_free = obj["fs_free"];
-                        esp32cam.sd_free = obj["sd_free"];
-                        esp32cam.camera_image_rate = obj["img_rate"];
-                        esp32cam.wifi_enabled = (obj["enabled"][0] == '1')?1:0;     
-                        esp32cam.wifi_udp_enabled = (obj["enabled"][1] == '1')?1:0;      
-                        esp32cam.wifi_yamcs_enabled = (obj["enabled"][2] == '1')?1:0;    
-                        esp32cam.wifi_image_enabled = (obj["enabled"][3] == '1')?1:0;    
-                        esp32cam.camera_enabled = (obj["enabled"][4] == '1')?1:0;                           
-                        esp32cam.sd_enabled = (obj["enabled"][5] == '1')?1:0; 
-                        esp32cam.sd_image_enabled = (obj["enabled"][6] == '1')?1:0; 
-                        esp32cam.sd_json_enabled = (obj["enabled"][7] == '1')?1:0;  
-                        esp32cam.sd_ccsds_enabled = (obj["enabled"][8] == '1')?1:0; 
-                        esp32cam.sd_active = (obj["current"][0] == '1')?1:0;           
-                        esp32cam.camera_active = (obj["current"][1] == '1')?1:0; 
-                        esp32cam.serial_connected = (obj["connected"][0] == '1')?1:0;
-                        esp32cam.wifi_connected = (obj["connected"][1] == '1')?1:0; 
-                        //esp32cam.udp_rate;
-                        //esp32cam.yamcs_rate;
-                        //esp32cam.serial_in_rate;
-                        //esp32cam.serial_out_rate;
-                        //esp32cam.yamcs_buffer;
-                        //esp32cam.serial_buffer;
+                        esp32cam.tc_exec_ctr = obj["tc"]["exec"];
+                        esp32cam.tc_fail_ctr = obj["tc"]["fail"];
+                        esp32cam.camera_image_rate = obj["rate"][0];
+                        esp32cam.udp_rate = obj["rate"][1];
+                        esp32cam.yamcs_rate = obj["rate"][2];
+                        esp32cam.serial_in_rate = obj["rate"][3];
+                        esp32cam.serial_out_rate = obj["rate"][4];
+                        esp32cam.fs_rate = obj["rate"][5];
+                        esp32cam.sd_json_rate = obj["rate"][6];
+                        esp32cam.sd_ccsds_rate = obj["rate"][7];
+                        esp32cam.sd_image_rate = obj["rate"][8];
+                        esp32cam.yamcs_buffer = obj["buf"][0];
+                        esp32cam.serial_buffer = obj["buf"][1];
+                        esp32cam.mem_free = obj["mem"][0];
+                        esp32cam.fs_free = obj["mem"][1];
+                        esp32cam.sd_free = obj["mem"][2];
+                        esp32cam.camera_enabled = (obj["ena"][0] == '1')?1:0;  
+                        esp32cam.wifi_enabled = (obj["ena"][1] == '1')?1:0;     
+                        esp32cam.wifi_udp_enabled = (obj["ena"][2] == '1')?1:0;      
+                        esp32cam.wifi_yamcs_enabled = (obj["ena"][3] == '1')?1:0;    
+                        esp32cam.wifi_image_enabled = (obj["ena"][4] == '1')?1:0;    
+                        esp32cam.fs_enabled = (obj["ena"][5] == '1')?1:0; 
+                        esp32cam.fs_ftp_enabled = (obj["ena"][6] == '1')?1:0; 
+                        esp32cam.time_set = (obj["ena"][7] == '1')?1:0;  
+                        esp32cam.sd_enabled = (obj["ena"][8] == '1')?1:0; 
+                        esp32cam.sd_image_enabled = (obj["ena"][9] == '1')?1:0; 
+                        esp32cam.sd_json_enabled = (obj["ena"][10] == '1')?1:0;  
+                        esp32cam.sd_ccsds_enabled = (obj["ena"][11] == '1')?1:0; 
+                        esp32cam.serial_connected = (obj["conn"]["up"][0] == '1')?1:0;
+                        esp32cam.wifi_connected = (obj["conn"]["up"][1] == '1')?1:0; 
+                        esp32cam.warn_serial_connloss = (obj["conn"]["warn"][0] == '1')?1:0; 
+                        esp32cam.warn_wifi_connloss = (obj["conn"]["warn"][1] == '1')?1:0; 
+                        esp32cam.err_serial_dataloss = (obj["conn"]["err"][0] == '1')?1:0; 
+                        esp32cam.err_yamcs_dataloss = (obj["conn"]["err"][1] == '1')?1:0; 
+                        esp32cam.err_fs_dataloss = (obj["conn"]["err"][2] == '1')?1:0; 
+                        esp32cam.err_sd_dataloss = (obj["conn"]["err"][3] == '1')?1:0; 
+                        esp32cam.camera_active = (obj["act"][0] == '1')?1:0; 
+                        esp32cam.fs_active = (obj["act"][1] == '1')?1:0;           
+                        esp32cam.sd_active = (obj["act"][2] == '1')?1:0;           
+                        esp32cam.ftp_active = (obj["act"][3] == '1')?1:0;           
+                        esp32cam.ota_active = (obj["act"][4] == '1')?1:0;           
                         publish_packet (TM_ESP32CAM);
-                        break;
-    case TM_CAMERA:     // {\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"exp\":%u,\"sd\":%u,\"wifi\":%u}
+                        break;                                                                                                                          
+    case TM_CAMERA:     // {\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}
                         ov2640.packet_ctr = obj["ctr"];
                         ov2640.camera_mode = id_of(obj["mode"], sizeof(cameraModeName[0]), (char*)&cameraModeName, sizeof(cameraModeName));
                         ov2640.resolution = id_of(obj["res"], sizeof(cameraResolutionName[0]), (char*)cameraResolutionName, sizeof(cameraResolutionName));
                         ov2640.auto_res = obj["auto_res"];
                         strcpy (ov2640.filename, obj["filename"]);
                         ov2640.filesize = obj["size"];
-                        ov2640.exposure_ms = obj["exp"];
-                        ov2640.sd_ms = obj["sd"];
-                        ov2640.wifi_ms = obj["wifi"];
-                        esp32.camera_active = true;
+                        ov2640.exposure_ms = obj["ms"]["exp"];
+                        ov2640.sd_ms = obj["ms"]["sd"];
+                        ov2640.wifi_ms = obj["ms"]["wifi"];
                         publish_packet (TM_CAMERA);
                         break;
     case TC_ESP32:      // execute command
@@ -1714,11 +1770,39 @@ void parse_json (const char* json_string) { // TODO: cleanup
                           cmd_set_parameter (obj["parameter"], obj["value"]);
                         }
                         else {
-                          publish_event (STS_ESP32, SS_ESP32, EVENT_ERROR, "JSON command to ESP32 not understood");
+                          publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32 not understood");
+                          return false;
                         }
                         break;
     case TC_ESP32CAM:   // forward command
-                        //publish_tc (TC_ESP32CAM, obj["cmd"], json_str);
+                        tc_esp32cam.cmd_id = id_of (obj["cmd"], sizeof(tcName[0]), (char*)tcName, sizeof(tcName));
+                        switch (tc_esp32cam.cmd_id) {
+                          case TC_REBOOT:        // {"cmd":"reboot","subsystem":0|1|2}
+                                                 tc_esp32cam.int_parameter = atoi (obj["subsystem"]);
+                                                 tc_esp32cam.str_parameter_size = 0;
+                                                 break;
+                         case TC_LOAD_CONFIG:   // {"cmd":"load_config","filename":"xxxxxx.cfg"}
+                                                 tc_esp32cam.int_parameter = 0;
+                                                 strcpy (tc_esp32cam.str_parameter, obj["filename"]);
+                                                 tc_esp32cam.str_parameter_size = strlen (tc_esp32cam.str_parameter);
+                                                 break;
+                          case TC_LOAD_ROUTING:  // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
+                                                 tc_esp32cam.int_parameter = 0;
+                                                 strcpy (tc_esp32cam.str_parameter, obj["filename"]);
+                                                 tc_esp32cam.str_parameter_size = strlen (tc_esp32cam.str_parameter);
+                                                 break;
+                          case TC_SET_PARAMETER: // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
+                                                 tc_esp32cam.int_parameter = 0;
+                                                 strcpy ((char*)&tc_esp32cam.str_parameter, obj["parameter"]);
+                                                 tc_esp32cam.str_parameter[strlen (obj["parameter"])] = 0;
+                                                 strcpy ((char*)(&tc_esp32cam.str_parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
+                                                 tc_esp32cam.str_parameter_size = strlen (obj["parameter"]) + strlen (obj["value"]) + 1;
+                                                 break;
+                          default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32CAM not understood");
+                                                 return false;
+                            
+                        }
+                        publish_packet (TC_ESP32CAM);
                         break;
     #endif
     #ifdef PLATFORM_ESP32CAM
@@ -1727,60 +1811,62 @@ void parse_json (const char* json_string) { // TODO: cleanup
                         sts_esp32.type = id_of ((const char*)obj["type"], sizeof(eventName[0]), (char*)&eventName, sizeof(eventName));
                         sts_esp32.subsystem = id_of ((const char*)obj["ss"], sizeof(subsystemName[0]), (char*)&subsystemName, sizeof(subsystemName));
                         strcpy (sts_esp32.message, obj["msg"]);
+                        sts_esp32.message_size = strlen (sts_esp32.message);
                         publish_packet (STS_ESP32);
                         break;
-    case TM_ESP32:      // {\"ctr\":%u,\"opsmode\":\"%s\",\"err\":%u,\"warn\":%u,\"mem_free\":%u,\"press_rate\":%u,\"motion_rate\":%u,\"cam_rate\":%u,\"gps_rate\":%u,\"radio_rate\":%u,\"sep_sts\":%d,\"enabled\":\"%d%d%d%d%d%d%d%d\",\"current\":\"%d%d%d%d%d\",\"conn\":\"%d%d\",\"debug\":\"%d%d%d%d%d%d%d\"}
+    case TM_ESP32:      // {\"ctr\":%u,\"mode\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u],\"buf\":[%u,%u],\"inst_rate\":[%u,%u,%u,%u,%u],\"comm_rate\":[%u,%u,%u,%u,%u],\"sep\":%d,\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}
                         esp32.packet_ctr = obj["ctr"];
                         esp32.opsmode = id_of(obj["opsmode"], sizeof(opsmodeName[0]), (char*)&opsmodeName, sizeof(opsmodeName));
                         esp32.error_ctr = obj["err"];
                         esp32.warning_ctr = obj["warn"];
-                        //esp32.tc_exec_ctr
-                        //esp32.tc_fail_ctr
-                        esp32.mem_free = obj["mem_free"];
-                        esp32.fs_free = obj["fs_free"];
-                        esp32.pressure_rate = obj["press_rate"];
-                        esp32.motion_rate = obj["motion_rate"];
-                        esp32.camera_rate = obj["cam_rate"];
-                        esp32.gps_rate = obj["gps_rate"];
-                        esp32.radio_rate = obj["radio_rate"];
-                        esp32.separation_sts = obj["sep_sts"];
-                        esp32.radio_enabled = (obj["enabled"][0] == '1')?1:0;     
-                        esp32.pressure_enabled = (obj["enabled"][1] == '1')?1:0;     
-                        esp32.motion_enabled = (obj["enabled"][2] == '1')?1:0;     
-                        esp32.gps_enabled = (obj["enabled"][3] == '1')?1:0;     
-                        esp32.camera_enabled = (obj["enabled"][4] == '1')?1:0;     
-                        esp32.wifi_enabled = (obj["enabled"][5] == '1')?1:0;     
-                        esp32.wifi_udp_enabled = (obj["enabled"][6] == '1')?1:0;      
-                        esp32.wifi_yamcs_enabled = (obj["enabled"][7] == '1')?1:0;    
-                        esp32.radio_active = (obj["current"][0] == '1')?1:0;     
-                        esp32.pressure_active = (obj["current"][1] == '1')?1:0;     
-                        esp32.motion_active = (obj["current"][2] == '1')?1:0;     
-                        esp32.gps_active = (obj["current"][3] == '1')?1:0;     
-                        esp32.camera_active = (obj["current"][4] == '1')?1:0; 
-                        esp32.serial_connected = (obj["conn"][5] == '1')?1:0;     
-                        esp32.wifi_connected = (obj["conn"][6] == '1')?1:0;        
-                        // udp_rate;
-                        // yamcs_rate;
-                        // serial_in_rate;
-                        // serial_out_rate;
-                        // yamcs_buffer;
-                        // serial_buffer;
-                        // radio_debug:1;           // 7
-                        // pressure_debug:1;        //  6
-                        // motion_debug:1;          //   5
-                        // gps_debug:1;             //    4
-                        // camera_debug:1;          //     3  
-                        // wifi_debug:1;            //      2
-                        // esp32_debug:1;           //        0
+                        esp32.tc_exec_ctr = obj["tc"]["exec"];
+                        esp32.tc_fail_ctr = obj["tc"]["fail"];
+                        esp32.radio_rate = obj["inst_rate"][0];
+                        esp32.pressure_rate = obj["inst_rate"][1];
+                        esp32.motion_rate = obj["inst_rate"][2];
+                        esp32.gps_rate = obj["inst_rate"][3];
+                        esp32.camera_rate = obj["inst_rate"][4];
+                        esp32cam.udp_rate = obj["comm_rate"][1];
+                        esp32cam.yamcs_rate = obj["comm_rate"][2];
+                        esp32cam.serial_in_rate = obj["comm_rate"][3];
+                        esp32cam.serial_out_rate = obj["comm_rate"][4];
+                        esp32cam.fs_rate = obj["comm_rate"][5];
+                        esp32.yamcs_buffer = obj["buf"][0];
+                        esp32.serial_buffer = obj["buf"][1];
+                        esp32.mem_free = obj["mem"][0];
+                        esp32.fs_free = obj["mem"][1];
+                        esp32.separation_sts = obj["sep"];
+                        esp32.radio_enabled = (obj["ena"][0] == '1')?1:0;     
+                        esp32.pressure_enabled = (obj["ena"][1] == '1')?1:0;     
+                        esp32.motion_enabled = (obj["ena"][2] == '1')?1:0;     
+                        esp32.gps_enabled = (obj["ena"][3] == '1')?1:0;     
+                        esp32.camera_enabled = (obj["ena"][4] == '1')?1:0;     
+                        esp32.wifi_enabled = (obj["ena"][5] == '1')?1:0;     
+                        esp32.wifi_udp_enabled = (obj["ena"][6] == '1')?1:0;      
+                        esp32.wifi_yamcs_enabled = (obj["ena"][7] == '1')?1:0;
+                        esp32.fs_enabled = (obj["ena"][8] == '1')?1:0; 
+                        esp32.fs_ftp_enabled = (obj["ena"][9] == '1')?1:0; 
+                        esp32.time_set = (obj["ena"][10] == '1')?1:0;  
+                        esp32.serial_connected = (obj["conn"]["up"][0] == '1')?1:0;
+                        esp32.wifi_connected = (obj["conn"]["up"][1] == '1')?1:0; 
+                        esp32.warn_serial_connloss = (obj["conn"]["warn"][0] == '1')?1:0; 
+                        esp32.warn_yamcs_connloss = (obj["conn"]["warn"][1] == '1')?1:0; 
+                        esp32.err_serial_dataloss = (obj["conn"]["err"][0] == '1')?1:0; 
+                        esp32.err_yamcs_dataloss = (obj["conn"]["err"][1] == '1')?1:0; 
+                        esp32.err_fs_dataloss = (obj["conn"]["err"][2] == '1')?1:0; 
+                        esp32.err_sd_dataloss = (obj["conn"]["err"][3] == '1')?1:0; 
+                        esp32.radio_active = (obj["act"][0] == '1')?1:0;     
+                        esp32.pressure_active = (obj["act"][1] == '1')?1:0;     
+                        esp32.motion_active = (obj["act"][2] == '1')?1:0;     
+                        esp32.gps_active = (obj["act"][3] == '1')?1:0;     
+                        esp32.camera_active = (obj["act"][4] == '1')?1:0; 
+                        esp32.fs_active = (obj["act"][5] == '1')?1:0;           
+                        esp32.sd_active = (obj["act"][6] == '1')?1:0;           
+                        esp32.ftp_active = (obj["act"][7] == '1')?1:0;           
+                        esp32.ota_active = (obj["act"][8] == '1')?1:0;  
                         publish_packet (TM_ESP32);
                         break;
-    case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"lat\":%.6f,\"lon\":%.6f,\"alt\":%.2f,\"v_north\":%.2f,\"v_east\":%.2f,\"v_down\":%.2f,\"hdop\":%d.%03d,\"vdop\":%d.%03d}
-                        neo6mv2.time_valid = false;
-                        neo6mv2.location_valid = false;
-                        neo6mv2.altitude_valid = false;
-                        neo6mv2.speed_valid = false;
-                        neo6mv2.hdop_valid = false;
-                        neo6mv2.vdop_valid = false;
+    case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%.6f,%.6f,%.2f],\"zero\":[%.6f,%.6f,%.2f],\"xyz\":[%d,%d,%d],\"v\":[%.2f,%.2f,%.2f],\"dop\":{\"h\":%d.%03d,\"v\":%d.%03d},\"valid\":\"%d%d%d%d%d%d\"}
                         neo6mv2.packet_ctr = obj["ctr"];
                         neo6mv2.status = id_of(obj["sts"], sizeof(gpsName[0]), (char*)&gpsName, sizeof(gpsName));
                         neo6mv2.satellites = obj["sats"];
@@ -1790,39 +1876,46 @@ void parse_json (const char* json_string) { // TODO: cleanup
                           neo6mv2.minutes = obj["time"].substring(3,4);
                           neo6mv2.seconds = obj["time"].substring(6,7);
                         }
-                        if (obj.containsKey("lat")) {
-                          neo6mv2.location_valid = true;
-                          neo6mv2.latitude = obj["lat"];
-                          neo6mv2.longitude = obj["lon"];
+                        if (obj.containsKey("loc")) {
+                          neo6mv2.latitude = obj["loc"][0];
+                          neo6mv2.longitude = obj["loc"][1];
+                          neo6mv2.altitude = obj["loc"][2];
                         }
-                        if (obj.containsKey("alt")) {
-                          neo6mv2.altitude_valid = true;
-                          neo6mv2.altitude = obj["alt"];
+                        if (obj.containsKey("zero")) {
+                          neo6mv2.latitude = obj["zero"][0];
+                          neo6mv2.longitude = obj["zero"][1];
+                          neo6mv2.altitude = obj["zero"][2];
                         }
-                        if (obj.containsKey("v_north")) {
-                          neo6mv2.speed_valid = true;
-                          neo6mv2.v_north = obj["v_north"];
-                          neo6mv2.v_east = obj["v_east"];
-                          neo6mv2.v_down = obj["v_down"];
+                        if (obj.containsKey("xyz")) {
+                          neo6mv2.x = obj["xyz"][0];
+                          neo6mv2.y = obj["xyz"][1];
+                          neo6mv2.z = obj["xyz"][2];
                         }
-                        if (obj.containsKey("hdop")) {
-                          neo6mv2.hdop_valid = true;
-                          neo6mv2.milli_hdop = obj["hdop"]*1000;
+                        if (obj.containsKey("v")) {
+                          neo6mv2.v_north = obj["v"][0];
+                          neo6mv2.v_east = obj["v"][1];
+                          neo6mv2.v_down = obj["v"][2];
                         }
-                        if (obj.containsKey("vdop")) {
-                          neo6mv2.vdop_valid = true;
-                          neo6mv2.milli_vdop = obj["vdop"]*1000;
-                        }
+                        if (obj.containsKey("dop")) {
+                          neo6mv2.milli_hdop = obj["dop"]["h"]*1000;
+                          neo6mv2.milli_vdop = obj["dop"]["v"]*1000;
+                        }         
+                        neo6mv2.time_valid = (obj["valid"][0] == '1')?1:0;
+                        neo6mv2.location_valid = (obj["valid"][1] == '1')?1:0;
+                        neo6mv2.altitude_valid = (obj["valid"][2] == '1')?1:0;
+                        neo6mv2.speed_valid = (obj["valid"][3] == '1')?1:0;
+                        neo6mv2.hdop_valid = (obj["valid"][4] == '1')?1:0;
+                        neo6mv2.vdop_valid = (obj["valid"][5] == '1')?1:0;
                         publish_packet (TM_GPS);
                         break;
-    case TM_MOTION:     // {\"ctr\":%u,\"accel\":[\"X\":%.2f,\"Y\":%.2f,\"Z\":%.2f],\"gyro\":[\"X\":%.2f,\"Y\":%.2f,\"Z\":%.2f],\"tilt\":%.2f,\"g\":%.2f,\"a\":%.2f,\"rpm\":%.2f}
+    case TM_MOTION:     // {\"ctr\":%u,\"accel\":[%.2f,%.2f,%.2f],\"gyro\":[%.2f,%.2f,%.2f],\"tilt\":%.2f,\"g\":%.2f,\"a\":%.2f,\"rpm\":%.2f}
                         mpu6050.packet_ctr = obj["ctr"];
-                        mpu6050.accel_x_rocket = obj["accel"]["X"];
-                        mpu6050.accel_y_rocket = obj["accel"]["Y"];
-                        mpu6050.accel_z_rocket = obj["accel"]["Z"];
-                        mpu6050.gyro_x_rocket = obj["gyro"]["X"];
-                        mpu6050.gyro_y_rocket = obj["gyro"]["Y"];
-                        mpu6050.gyro_z_rocket = obj["gyro"]["Z"];
+                        mpu6050.accel_x_rocket = obj["accel"][0];
+                        mpu6050.accel_y_rocket = obj["accel"][1];
+                        mpu6050.accel_z_rocket = obj["accel"][2];
+                        mpu6050.gyro_x_rocket = obj["gyro"][0];
+                        mpu6050.gyro_y_rocket = obj["gyro"][1];
+                        mpu6050.gyro_z_rocket = obj["gyro"][2];
                         mpu6050.tilt = obj["tilt"];
                         mpu6050.g = obj["g"];
                         mpu6050.a = obj["a"];
@@ -1840,10 +1933,61 @@ void parse_json (const char* json_string) { // TODO: cleanup
                         break;
     case TM_RADIO:      // {\"ctr\":%u,\"data\":\"%s\"} 
                         radio.packet_ctr = obj["ctr"];
+                        hex_to_bin (&radio, obj["data"]);
                         publish_packet (TM_RADIO);
                         break;
-    case TC_ESP32:      // forward command  
-                        //publish_tc (TC_ESP32, obj["cmd"], json_str);
+    case TM_TIMER:      // {\"ctr\":%u,\"idle\":%u,\"instr\":[%u,%u,%u,%u,%u],\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u]}
+                        timer.packet_ctr = obj["ctr"];
+                        timer.radio_duration = obj["instr"][0];
+                        timer.pressure_duration = obj["instr"][1];
+                        timer.motion_duration = obj["instr"][2];
+                        timer.gps_duration = obj["instr"][3];
+                        timer.esp32cam_duration = obj["instr"][4];
+                        timer.serial_duration = obj["fun"][0];
+                        timer.ota_duration = obj["fun"][1];
+                        timer.ftp_duration = obj["fun"][2];
+                        timer.wifi_duration = obj["fun"][3];
+                        timer.tc_duration = obj["fun"][4];
+                        timer.idle_duration = obj["idle"];
+                        timer.publish_fs_duration = obj["pub"][0];
+                        timer.publish_serial_duration = obj["pub"][1];
+                        timer.publish_yamcs_duration = obj["pub"][2];
+                        timer.publish_udp_duration = obj["pub"][3];
+                        publish_packet (TM_TIMER);
+                        break;
+    case TC_ESP32:      // forward command
+                        tc_esp32.cmd_id = id_of (obj["cmd"], sizeof(tcName[0]), (char*)tcName, sizeof(tcName));
+                        switch (tc_esp32.cmd_id) {
+                          case TC_REBOOT:        // {"cmd":"reboot","subsystem":0|1|2}
+                                                 tc_esp32.int_parameter = obj["subsystem"];
+                                                 tc_esp32.str_parameter_size = 0;
+                                                 break;
+                          case TC_SET_OPSMODE:   // {"cmd":"set_opsmode","opsmode":"checkout|ready|static"}
+                                                 tc_esp32.int_parameter = id_of (obj["opsmode"], sizeof(modeName[0]), (char*)modeName, sizeof(modeName))
+                                                 tc_esp32.str_parameter_size = 0;
+                                                 break;
+                          case TC_LOAD_CONFIG:   // {"cmd":"load_config","filename":"xxxxxx.cfg"}
+                                                 tc_esp32.int_parameter = 0;
+                                                 strcpy (tc_esp32.str_parameter, obj["filename"]);
+                                                 tc_esp32.str_parameter_size = strlen (tc_esp32.str_parameter);
+                                                 break;
+                          case TC_LOAD_ROUTING:  // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
+                                                 tc_esp32.int_parameter = 0;
+                                                 strcpy (tc_esp32.str_parameter, obj["filename"]);
+                                                 tc_esp32.str_parameter_size = strlen (esp32.str_parameter);
+                                                 break;
+                          case TC_SET_PARAMETER: // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
+                                                 tc_esp32.int_parameter = 0;
+                                                 strcpy ((char*)&tc_esp32.str_parameter, obj["parameter"]);
+                                                 tc_esp32.str_parameter[strlen (obj["parameter"])] = 0;
+                                                 strcpy ((char*)(&tc_esp32.str_parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
+                                                 tc_esp32.str_parameter_size = strlen (obj["parameter"]) + strlen (obj["value"]) + 1;
+                                                 break;
+                          default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32 not understood");
+                                                 return false;
+                            
+                        }
+                        publish_packet (TC_ESP32);
                         break;
     case TC_ESP32CAM:   // execute command
                         if (!strcmp(obj["cmd"], "reboot")) {
@@ -1867,14 +2011,16 @@ void parse_json (const char* json_string) { // TODO: cleanup
                           cmd_set_parameter (obj["parameter"], obj["value"]);
                         }
                         else {
-                          publish_event (STS_ESP32CAM, SS_ESP32CAM, EVENT_ERROR, "JSON command to ESP32CAM not understood");
+                          publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32CAM not understood");
                         }
                         break;
     #endif
-    default:            sprintf (buffer, "Ignored packet with PID %d received over serial", id_of (tag_str, sizeof(pidName[0]), (char*)pidName, sizeof(pidName)));
+    default:            sprintf (buffer, "Ignored JSON packet with PID %d", id_of (tag_str, sizeof(pidName[0]), (char*)pidName, sizeof(pidName)));
                         publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
+                        return false;
                         break;
   }
+  return true;
 }
 
 
@@ -2108,6 +2254,10 @@ bool cmd_load_routing (const char* filename) {
   fs_load_routing (filename);
 }
 
+bool cmd_toggle_routing (uint8_t PID, const char interface) {
+  // TODO: TBW + integrate
+}
+
 // SUPPORT FUNCTIONS
 
 uint8_t id_of (const char* string2, uint8_t string_len, const char* array_of_strings, uint16_t array_len) { 
@@ -2130,4 +2280,8 @@ String get_hex_str (char* blob, uint16_t length) {
     hex_str += hex[ *pblob     & 0xF];
   }
   return (hex_str);
+}
+
+void hex_to_bin (byte* destination, char* hex_input) {
+  // TODO: TBW
 }
