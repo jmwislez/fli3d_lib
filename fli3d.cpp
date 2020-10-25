@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-10-23
+ * version: 2020-10-25
  */
 
 #include "fli3d.h"
@@ -30,8 +30,9 @@ char       buffer[JSON_MAX_SIZE];
 char       serial_buffer[JSON_MAX_SIZE];
 char       path_buffer[32];
 
-#ifdef PLATFORM_ESP32
 extern void ota_setup ();
+#ifdef PLATFORM_ESP32
+extern bool gps_set_samplerate (uint8_t rate);
 #endif 
 
 ccsds_hdr_t        ccsds_hdr;
@@ -89,7 +90,7 @@ const char cameraResolutionName[11][10] = { "160x120", "invalid1", "invalid2", "
 const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
 const char commLineName[9][13] =          { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs", "radio" };
 const char tcName[5][20] =                { "reboot", "set_opsmode", "load_config", "load_routing", "set_parameter" };
-const char gpsStatusName[5][10] =         { "none", "est", "time_only", "std", "dgps" }; 
+const char gpsStatusName[9][11] =         { "wait", "est", "time_only", "std", "dgps", "rtk_float", "rtk_fixed", "status_pps", "none" }; 
 
 char routing_serial[NUMBER_OF_PID];
 char routing_udp[NUMBER_OF_PID];
@@ -187,7 +188,7 @@ bool ftp_setup () {
 bool ftp_check () {
   wifiTCP_FTP.handleFTP (LITTLEFS);
   tm_this->fs_ftp_enabled = true;
-  tm_this->fs_active = true;
+  tm_this->ftp_active = true;
 }
 
 void fs_create_today_dir () {
@@ -620,7 +621,10 @@ bool set_parameter (const char* parameter, const char* value) {
     config_this->gps_rate = atoi(value);
      if (config_this->gps_rate) {
       var_timer.gps_interval = (1000 / config_this->gps_rate);
-      sprintf (buffer, "Set gps_rate to %u Hz", config_this->gps_rate); // TODO: does not work realtime?
+      if (esp32.gps_enabled) {
+        gps_set_samplerate (config_this->gps_rate);
+      }
+      sprintf (buffer, "Set gps_rate to %u Hz", config_this->gps_rate); 
     }
     else {
       tm_this->gps_enabled = false;
@@ -703,15 +707,16 @@ bool wifi_setup () {
   WiFi.mode(WIFI_AP_STA); 
   if (config_this->wifi_ap_enable) {
     return_wifi_ap = wifi_ap_setup ();
+    tm_this->wifi_enabled = true;
   }
   if (config_this->wifi_sta_enable) {
     return_wifi_sta = wifi_sta_setup ();
+    tm_this->wifi_enabled = true;
   }
   if (config_this->wifi_yamcs_enable) {
     return_wifi_yamcs = yamcs_tc_setup ();
   }
-  tm_this->wifi_enabled = (return_wifi_ap and return_wifi_sta and return_wifi_yamcs);
-  return (tm_this->wifi_enabled);
+  return (return_wifi_ap and return_wifi_sta and return_wifi_yamcs);
 }
 
 bool wifi_ap_setup () {
@@ -1040,7 +1045,6 @@ bool publish_yamcs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint1
           ccsds_len++;
         }
         uint8_t batch_count = 0;
-        tm_this->wifi_enabled = true;
         tm_this->fs_active = true;
         fs_ccsds.seek(ccsds_len * var_this->yamcs_last_packet[PID]);         
         while (payload_ctr > var_this->yamcs_last_packet[PID] and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
@@ -1183,7 +1187,7 @@ bool yamcs_tc_setup () {
 #ifndef ASYNCUDP
 bool yamcs_tc_setup () {
   if (wifiUDP_yamcs_tc.begin(WiFi.localIP(), config_network.yamcs_tc_port)) {
-    sprintf (buffer, "Listening for commands on UDP port %s:%u", WiFi.localIP().toString().c_str(), config_network.yamcs_tc_port);
+    sprintf (buffer, "Listening for CCSDS commands on UDP port %s:%u", WiFi.localIP().toString().c_str(), config_network.yamcs_tc_port);
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
   }
   else {
@@ -1339,16 +1343,11 @@ void reset_packet (uint8_t PID) {
                          esp32.ota_enabled = false;
                          break;
     case TM_GPS:         esp32.gps_rate++;
-                         esp32.gps_active = true; 
-                         radio.gps_active = true;
+    	                 neo6mv2.status = 8;  // set default to "none"
                          break;
     case TM_MOTION:      esp32.motion_rate++;
-                         esp32.motion_active = true; 
-                         radio.motion_active = true;
                          break;
     case TM_PRESSURE:    esp32.pressure_rate++;
-                         esp32.pressure_active = true;
-                         radio.pressure_active = true;
                          break;
     case TM_RADIO:       radio.pressure_active = false;
                          radio.motion_active = false;
@@ -1588,20 +1587,30 @@ void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) {
                            *json_buffer++ = '{';
                            json_buffer += sprintf (json_buffer, "\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d", neo6mv2_ptr->packet_ctr, gpsStatusName[neo6mv2_ptr->status], neo6mv2_ptr->satellites);
                            if (neo6mv2_ptr->time_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"time\":\"%02d:%02d:%02d\"", neo6mv2_ptr->hours, neo6mv2_ptr->minutes, neo6mv2_ptr->seconds);
+                             json_buffer += sprintf (json_buffer, ",\"time\":\"%02d:%02d:%02d.%02d\"", neo6mv2_ptr->hours, neo6mv2_ptr->minutes, neo6mv2_ptr->seconds, neo6mv2_ptr->centiseconds);
                            }
+                           if (neo6mv2_ptr->location_valid) {
+                             json_buffer += sprintf (json_buffer, ",\"loc\":[%d,%d]", neo6mv2_ptr->latitude, neo6mv2_ptr->longitude);
+                           }
+                           if (neo6mv2_ptr->altitude_valid) {
+                             json_buffer += sprintf (json_buffer, ",\"alt\":%d", neo6mv2_ptr->altitude);
+                           }  
                            if (neo6mv2_ptr->location_valid and neo6mv2_ptr->altitude_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"loc\":[%.6f,%.6f,%.2f]", neo6mv2_ptr->latitude, neo6mv2_ptr->longitude, neo6mv2_ptr->altitude);
-                             json_buffer += sprintf (json_buffer, ",\"zero\":[%.6f,%.6f,%.2f]", neo6mv2_ptr->latitude_zero, neo6mv2_ptr->longitude_zero, neo6mv2_ptr->altitude_zero);
+                             json_buffer += sprintf (json_buffer, ",\"zero\":[%d,%d,%d]", neo6mv2_ptr->latitude_zero, neo6mv2_ptr->longitude_zero, neo6mv2_ptr->altitude_zero);
+                           }
+                           if (neo6mv2_ptr->offset_valid) {
                              json_buffer += sprintf (json_buffer, ",\"xyz\":[%d,%d,%d]", neo6mv2_ptr->x, neo6mv2_ptr->y, neo6mv2_ptr->z);
                            }
                            if (neo6mv2_ptr->speed_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"v\":[%.2f,%.2f,%.2f]", neo6mv2_ptr->v_north, neo6mv2_ptr->v_east, neo6mv2_ptr->v_down);
+                             json_buffer += sprintf (json_buffer, ",\"v\":[%d,%d,%d]", neo6mv2_ptr->v_north, neo6mv2_ptr->v_east, neo6mv2_ptr->v_down);
                            }
-                           if (neo6mv2_ptr->hdop_valid and neo6mv2_ptr->hdop_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"dop\":{\"h\":%d.%03d,\"v\":%d.%03d}", neo6mv2_ptr->milli_hdop/1000, neo6mv2_ptr->milli_hdop%1000, neo6mv2_ptr->milli_vdop/1000, neo6mv2_ptr->milli_vdop%1000);
+                           if (neo6mv2_ptr->pdop_valid) {
+                             json_buffer += sprintf (json_buffer, ",\"pdop\":%d.%03d", neo6mv2_ptr->milli_pdop/1000, neo6mv2_ptr->milli_pdop%1000);
                            }
-                           json_buffer += sprintf (json_buffer, ",\"valid\":\"%d%d%d%d%d%d\"", neo6mv2_ptr->time_valid, neo6mv2_ptr->location_valid, neo6mv2_ptr->altitude_valid, neo6mv2_ptr->speed_valid, neo6mv2_ptr->hdop_valid, neo6mv2_ptr->vdop_valid);
+                           if (neo6mv2_ptr->error_valid) {
+                             json_buffer += sprintf (json_buffer, ",\"err\":[%d,%d,%d]", neo6mv2_ptr->x_err, neo6mv2_ptr->y_err, neo6mv2_ptr->z_err);
+                           }
+                           json_buffer += sprintf (json_buffer, ",\"valid\":\"%d%d%d%d%d%d%d\"", neo6mv2_ptr->time_valid, neo6mv2_ptr->location_valid, neo6mv2_ptr->altitude_valid, neo6mv2_ptr->speed_valid, neo6mv2_ptr->pdop_valid, neo6mv2_ptr->error_valid, neo6mv2_ptr->offset_valid);
                            *json_buffer++ = '}';
                            *json_buffer++ = 0;
                          }
@@ -1867,7 +1876,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32.ota_enabled = (obj["act"][8] == '1')?1:0;  
                         publish_packet (TM_ESP32);
                         break;
-    case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%.6f,%.6f,%.2f],\"zero\":[%.6f,%.6f,%.2f],\"xyz\":[%d,%d,%d],\"v\":[%.2f,%.2f,%.2f],\"dop\":{\"h\":%d.%03d,\"v\":%d.%03d},\"valid\":\"%d%d%d%d%d%d\"}
+    case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%d,%d,%d],\"zero\":[%d,%d,%d],\"xyz\":[%d,%d,%d],\"v\":[%d,%d,%d],\"pdop\":%d.%03d,\"valid\":\"%d%d%d%d%d%d\"}
                         neo6mv2.packet_ctr = obj["ctr"];
                         neo6mv2.status = id_of(obj["sts"], sizeof(gpsName[0]), (char*)&gpsName, sizeof(gpsName));
                         neo6mv2.satellites = obj["sats"];
@@ -1876,11 +1885,14 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                           neo6mv2.hours = obj["time"].substring(0,1);
                           neo6mv2.minutes = obj["time"].substring(3,4);
                           neo6mv2.seconds = obj["time"].substring(6,7);
+                          neo6mv2.centiseconds = obj["time"].substring(9,11);
                         }
                         if (obj.containsKey("loc")) {
                           neo6mv2.latitude = obj["loc"][0];
                           neo6mv2.longitude = obj["loc"][1];
-                          neo6mv2.altitude = obj["loc"][2];
+                        }
+                        if (obj.containsKey("alt")) {
+                          neo6mv2.altitude = obj["alt"];
                         }
                         if (obj.containsKey("zero")) {
                           neo6mv2.latitude = obj["zero"][0];
@@ -1897,16 +1909,21 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                           neo6mv2.v_east = obj["v"][1];
                           neo6mv2.v_down = obj["v"][2];
                         }
-                        if (obj.containsKey("dop")) {
-                          neo6mv2.milli_hdop = obj["dop"]["h"]*1000;
-                          neo6mv2.milli_vdop = obj["dop"]["v"]*1000;
+                        if (obj.containsKey("pdop")) {
+                          neo6mv2.milli_pdop = obj["pdop"]*1000;
                         }         
+                        if (obj.containsKey("err")) {
+                          neo6mv2.x_err = obj["err"][0];
+                          neo6mv2.y_err = obj["err"][1];
+                          neo6mv2.z_err = obj["err"][2];
+                        }
                         neo6mv2.time_valid = (obj["valid"][0] == '1')?1:0;
                         neo6mv2.location_valid = (obj["valid"][1] == '1')?1:0;
                         neo6mv2.altitude_valid = (obj["valid"][2] == '1')?1:0;
                         neo6mv2.speed_valid = (obj["valid"][3] == '1')?1:0;
-                        neo6mv2.hdop_valid = (obj["valid"][4] == '1')?1:0;
-                        neo6mv2.vdop_valid = (obj["valid"][5] == '1')?1:0;
+                        neo6mv2.pdop_valid = (obj["valid"][4] == '1')?1:0;
+                        neo6mv2.error_valid = (obj["valid"][5] == '1')?1:0;
+                        neo6mv2.offset_valid = (obj["valid"][6] == '1')?1:0;
                         publish_packet (TM_GPS);
                         break;
     case TM_MOTION:     // {\"ctr\":%u,\"accel\":[%.2f,%.2f,%.2f],\"gyro\":[%.2f,%.2f,%.2f],\"tilt\":%.2f,\"g\":%.2f,\"a\":%.2f,\"rpm\":%.2f}

@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-10-23
+ * version: 2020-10-25
  */
  
 #ifndef _FLI3D_H_
@@ -188,7 +188,7 @@ extern const char tcName[5][20];
 #define SERIAL_KEEPALIVE       6
 #define SERIAL_COMPLETE        7
 
-extern const char gpsStatusName[5][10]; 
+extern const char gpsStatusName[9][11]; 
 
 // TM/TC packet definitions
 
@@ -373,32 +373,35 @@ struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
   uint32_t millis:24;
   uint16_t packet_ctr;
   uint8_t  status:4;                // 4
-  uint8_t  satellites:4;            //  0
-  uint8_t  hours;
-  uint8_t  minutes;
-  uint8_t  seconds;
-  float    latitude;
-  float    longitude;
-  float    altitude;
-  float    latitude_zero;
-  float    longitude_zero;
-  float    altitude_zero;  
-  int16_t  x;
-  int16_t  y;
-  int16_t  z;
-  float    v_north;
-  float    v_east;
-  float    v_down;
-  uint16_t milli_hdop;
-  uint16_t milli_vdop;
+  uint8_t  satellites:4;            //  0     *GGA
+  uint8_t  hours;                   //        RMC,*GGA,ZDA
+  uint8_t  minutes;                 //        RMC,*GGA,ZDA
+  uint8_t  seconds;                 //        RMC,*GGA,ZDA
+  uint8_t  centiseconds;            //        *GST
+  int32_t  latitude;                //        RMC,*GGA,GLL
+  int32_t  longitude;               //        RMC,*GGA,GLL
+  int32_t  altitude;                // cm     *GGA
+  int32_t  latitude_zero;
+  int32_t  longitude_zero;
+  int32_t  altitude_zero;           // cm  
+  int16_t  x;                       // cm
+  int16_t  y;                       // cm
+  int16_t  z;                       // cm
+  int16_t  x_err;                   // cm     *GST
+  int16_t  y_err;                   // cm     *GST
+  int16_t  z_err;                   // cm     *GST
+  int32_t  v_north;                 // cm/s   VTG
+  int32_t  v_east;                  // cm/s   VTG
+  int32_t  v_down;                  // cm/s   PUBX_00
+  uint16_t milli_pdop;              //        *GSA
   bool     time_valid:1;            // 7
   bool     location_valid:1;        //  6
   bool     altitude_valid:1;        //   5
   bool     speed_valid:1;           //    4
-  bool     hdop_valid:1;            //     3
-  bool     vdop_valid:1;            //      2
-  bool     free_01:1;               //       1
-  bool     free_00:1;               //        0
+  bool     pdop_valid:1;            //     3
+  bool     error_valid:1;           //      2
+  bool     offset_valid:1;          //       1
+  bool     free_10:1;               //        0
 };
 
 struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
