@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-10-25
+ * version: 2020-10-31
  */
  
 #ifndef _FLI3D_H_
@@ -206,14 +206,14 @@ struct __attribute__ ((packed)) ccsds_hdr_t {
 }; 
 
 struct __attribute__ ((packed)) ccsds_t {
-  char     ccsds_hdr[6];
-  char     blob[JSON_MAX_SIZE];
+  byte     ccsds_hdr[6];
+  byte     blob[JSON_MAX_SIZE];
   uint8_t  blob_size;
   uint8_t  PID;
 };
 
 struct __attribute__ ((packed)) ccsds_tc_t {
-  char     ccsds_hdr[6];
+  byte     ccsds_hdr[6];
   uint8_t  cmd_id;
   uint8_t  int_parameter;
   char     str_parameter[JSON_MAX_SIZE];
@@ -393,46 +393,64 @@ struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
   int32_t  v_north;                 // cm/s   VTG
   int32_t  v_east;                  // cm/s   VTG
   int32_t  v_down;                  // cm/s   PUBX_00
+  uint16_t milli_hdop;              //        *GSA
+  uint16_t milli_vdop;              //        *GSA
   uint16_t milli_pdop;              //        *GSA
   bool     time_valid:1;            // 7
   bool     location_valid:1;        //  6
   bool     altitude_valid:1;        //   5
   bool     speed_valid:1;           //    4
-  bool     pdop_valid:1;            //     3
-  bool     error_valid:1;           //      2
-  bool     offset_valid:1;          //       1
-  bool     free_10:1;               //        0
+  bool     hdop_valid:1;            //     3
+  bool     vdop_valid:1;            //      2
+  bool     pdop_valid:1;            //       1
+  bool     error_valid:1;           //        0
+  bool     offset_valid:1;          // 7
+  bool     free_16:1;
+  bool     free_15:1;
+  bool     free_14:1;
+  bool     free_13:1;
+  bool     free_12:1;
+  bool     free_11:1;
+  bool     free_10:1;
 };
 
 struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
   uint32_t millis:24;
   uint16_t packet_ctr;
-  float    accel_x_rocket;
-  float    accel_y_rocket;
-  float    accel_z_rocket;
-  float    gyro_x_rocket;
-  float    gyro_y_rocket;
-  float    gyro_z_rocket;
-  float    tilt;
-  float    g;
-  float    a;
-  float    rpm;
-  int16_t  a_x_rocket_offset;
-  int16_t  a_y_rocket_offset;
-  int16_t  a_z_rocket_offset;
-  int16_t  g_x_rocket_offset;
-  int16_t  g_y_rocket_offset;
-  int16_t  g_z_rocket_offset;
+  int16_t  accel_x;                 // cm/s2
+  int16_t  accel_y;                 // cm/s2
+  int16_t  accel_z;                 // cm/s2
+  int16_t  gyro_x;                  // cdeg/s
+  int16_t  gyro_y;                  // cdeg/s
+  int16_t  gyro_z;                  // cdeg/s
+  int16_t  tilt;                    // cdeg
+  uint16_t  g;                       // mG
+  int16_t  a;                       // cm/s2
+  int16_t  rpm;                     // crpm
+  uint8_t  accel_range:2;           //  6-7
+  uint8_t  gyro_range:2;            //   4-5
+  bool     accel_valid:1;           //    3
+  bool     gyro_valid:1;            //     2
+  bool     free_01:1;               //      1
+  bool     free_00:1;               //       0
 }; 
 
 struct __attribute__ ((packed)) tm_pressure_t { // APID: 49 (31)
   uint32_t millis:24;
   uint16_t packet_ctr;
-  float    pressure;
-  float    zero_level_pressure;
-  float    altitude;
-  float    velocity_v;
-  float    temperature;
+  uint32_t pressure;                // Pa
+  uint32_t zero_level_pressure;     // Pa
+  int16_t  height;                  // cm
+  int16_t  velocity_v;              // cm/s
+  int16_t  temperature;             // cdegC
+  bool     height_valid:1;          // 7
+  bool     free_06:1;               //  6
+  bool     free_05:1;               //   5
+  bool     free_04:1;               //    4
+  bool     free_03:1;               //     3
+  bool     free_02:1;               //      2
+  bool     free_01:1;               //       1
+  bool     free_00:1;               //        0
 }; 
 
 struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
@@ -445,17 +463,17 @@ struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
   bool     camera_active:1;         //     0
   uint8_t  error_ctr;
   uint8_t  warning_ctr;
-  uint8_t  pressure_altitude;       // m               (0 - 255 m)
+  uint8_t  pressure_height;         // m               (0 - 255 m)
   int8_t   pressure_velocity_v;     // m/s             (-125 - 126 m/s)
   int8_t   temperature;             // degC            (-125 - 126 degC)
   uint8_t  motion_tilt;             // deg             (0 - 180 deg)
-  int8_t   motion_g;                // g / 10          (-12.5 - 12.6 g)  
+  uint8_t  motion_g;                // G / 10          (0 - 25.5 G)  
   int8_t   motion_a;                // m/s2            (-125 - 126 m/s2)
   int8_t   motion_rpm;              //                 (-125 - 126 rpm)  
-  uint8_t  gps_satellites;
+  uint8_t  gps_satellites;          // not all bits needed, spare available (TODO: use for ESP32CAM?)
   int8_t   gps_velocity_v;          // m/s             (-125 - 126 m/s)
   uint8_t  gps_velocity;            // m/s             (0 - 255 m/s)
-  uint8_t  gps_altitude;            // m               (0 - 255 m)
+  uint8_t  gps_height;              // m               (0 - 255 m)
   uint16_t camera_image_ctr;  
   bool     esp32_serial_connected:1;        // 7
   bool     esp32_wifi_connected:1;          //  6 
@@ -548,12 +566,19 @@ struct __attribute__ ((packed)) config_network_t {
 };
 
 struct __attribute__ ((packed)) config_esp32_t { 
-  uint8_t  radio_rate;              // Hz (valid: 2 or less)
-  uint8_t  pressure_rate;           // Hz (up to 157 Hz, highest resolution up to 23 Hz); reached 176 Hz on ESP8266
-  uint8_t  motion_rate;             // Hz (up to 400)
-  uint8_t  gps_rate;                // Hz (valid: 1,5,10,16)
+  uint8_t  radio_rate;               // Hz (valid: 2 or less)
+  uint8_t  pressure_rate;            // Hz (up to 157 Hz, highest resolution up to 23 Hz); reached 176 Hz on ESP8266
+  uint8_t  motion_rate;              // Hz (up to 400) - 255 is highest set value
+  uint8_t  gps_rate;                 // Hz (valid: 1,5,10,16)
   char     config_file[20];
   char     routing_file[20];
+  int16_t  mpu6050_accel_sensitivity; // µm/s2 per LSB 
+  int16_t  mpu6050_accel_offset_x;    // y_sensor values
+  int16_t  mpu6050_accel_offset_y;    // z_sensor values
+  int16_t  mpu6050_accel_offset_z;    // x_sensor values
+  int16_t  mpu6050_gyro_offset_x;     // y_sensor values
+  int16_t  mpu6050_gyro_offset_y;     // z_sensor values
+  int16_t  mpu6050_gyro_offset_z;     // x_sensor values
   bool     radio_enable:1;          
   bool     pressure_enable:1;       
   bool     motion_enable:1;         
@@ -568,6 +593,8 @@ struct __attribute__ ((packed)) config_esp32_t {
   bool     serial_format:1;         
   bool     debug_over_serial:1;     
   bool     ota_enable:1;
+  bool     motion_udp_raw_enable:1;
+  bool     gps_udp_raw_enable:1;
 };
 
 struct __attribute__ ((packed)) var_esp32_t { 
@@ -702,12 +729,6 @@ extern void parse_ccsds (ccsds_t* ccsds_ptr);
 // JSON FUNCTIONALITY
 extern void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr);
 extern bool parse_json (const char* json_string);
-
-// RADIO FUNCTIONALITY
-#ifdef PLATFORM_ESP32
-extern bool radio_setup ();
-extern void publish_radio ();
-#endif
 
 // SERIAL FUNCTIONALITY
 extern uint16_t serial_check ();

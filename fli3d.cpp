@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-10-25
+ * version: 2020-10-31
  */
 
 #include "fli3d.h"
@@ -21,18 +21,17 @@ WiFiUDP wifiUDP_yamcs_tc;
 FtpServer wifiTCP_FTP;
 NTPClient timeClient(wifiUDP_NTP, config_network.ntp_server, 0);
 
-#ifdef PLATFORM_ESP32
-RH_ASK radio_tx (RADIO_BAUD, DUMMY_PIN1, RF433_TX_PIN, DUMMY_PIN2);
-char radio_buffer[2*(sizeof(tm_radio_t)+2)];
-#endif
-
-char       buffer[JSON_MAX_SIZE];
-char       serial_buffer[JSON_MAX_SIZE];
-char       path_buffer[32];
+char buffer[JSON_MAX_SIZE];
+char serial_buffer[JSON_MAX_SIZE];
+char path_buffer[32];
 
 extern void ota_setup ();
 #ifdef PLATFORM_ESP32
-extern bool gps_set_samplerate (uint8_t rate);
+extern void gps_set_samplerate (uint8_t rate);
+extern void motion_set_samplerate (uint8_t rate);
+extern void mpu6050_set_accel_range (uint8_t accel_range);
+extern void mpu6050_set_gyro_range (uint8_t gyro_range);
+extern void publish_radio ();
 #endif 
 
 ccsds_hdr_t        ccsds_hdr;
@@ -90,7 +89,7 @@ const char cameraResolutionName[11][10] = { "160x120", "invalid1", "invalid2", "
 const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
 const char commLineName[9][13] =          { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs", "radio" };
 const char tcName[5][20] =                { "reboot", "set_opsmode", "load_config", "load_routing", "set_parameter" };
-const char gpsStatusName[9][11] =         { "wait", "est", "time_only", "std", "dgps", "rtk_float", "rtk_fixed", "status_pps", "none" }; 
+const char gpsStatusName[9][11] =         { "none", "est", "time_only", "std", "dgps", "rtk_float", "rtk_fixed", "status_pps", "waiting" }; 
 
 char routing_serial[NUMBER_OF_PID];
 char routing_udp[NUMBER_OF_PID];
@@ -260,6 +259,10 @@ void load_default_config () {
   config_esp32.gps_rate = 1;
   strcpy (config_esp32.config_file, "/default.cfg");
   strcpy (config_esp32.routing_file, "/default.rt");
+  config_esp32.mpu6050_accel_sensitivity = 595;
+  config_esp32.mpu6050_accel_offset_x = 0;
+  config_esp32.mpu6050_accel_offset_y = 0;
+  config_esp32.mpu6050_accel_offset_z = 0;
   config_esp32.radio_enable = false;
   config_esp32.pressure_enable = false;
   config_esp32.motion_enable = false;
@@ -274,6 +277,10 @@ void load_default_config () {
   config_esp32.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
   config_esp32.debug_over_serial = true;
   config_esp32.ota_enable = false;
+  config_esp32.motion_udp_raw_enable = false;
+  config_esp32.gps_udp_raw_enable = false;
+  mpu6050.accel_range = 3;
+  mpu6050.gyro_range = 3;
   strcpy (config_esp32cam.config_file, "/default.cfg");
   strcpy (config_esp32cam.routing_file, "/default.rt");
   config_esp32cam.wifi_enable = true;
@@ -609,6 +616,7 @@ bool set_parameter (const char* parameter, const char* value) {
     config_this->motion_rate = atoi(value);
      if (config_this->motion_rate) {
       var_timer.motion_interval = (1000 / config_this->motion_rate);
+      motion_set_samplerate (config_this->motion_rate);
       sprintf (buffer, "Set motion_rate to %u Hz", config_this->motion_rate);
     }
     else {
@@ -657,21 +665,93 @@ bool set_parameter (const char* parameter, const char* value) {
     sprintf (buffer, "Set camera_enable to %s", config_this->camera_enable?"true":"false");
     success = true;
   }  
-  else if (!strcmp(parameter, "mpu6050_accel_offset_x_sensor")) { 
-    mpu6050.a_z_rocket_offset = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_x_sensor to %d", mpu6050.a_z_rocket_offset);
+  else if (!strcmp(parameter, "motion_udp_raw_enable")) { 
+    config_this->motion_udp_raw_enable = atoi(value);
+    sprintf (buffer, "Set motion_udp_raw_enable to %s", config_this->motion_udp_raw_enable?"true":"false");
+    success = true;
+  }
+  else if (!strcmp(parameter, "gps_udp_raw_enable")) { 
+    config_this->gps_udp_raw_enable = atoi(value);
+    sprintf (buffer, "Set gps_udp_raw_enable to %s", config_this->gps_udp_raw_enable?"true":"false");
+    success = true;
+  }
+  else if (!strcmp(parameter, "mpu6050_accel_offset_x")) { 
+    config_this->mpu6050_accel_offset_x = atoi(value);
+    sprintf (buffer, "Set mpu6050_accel_offset_x to %d", config_this->mpu6050_accel_offset_x);
     success = true;
   }  
-  else if (!strcmp(parameter, "mpu6050_accel_offset_y_sensor")) { 
-    mpu6050.a_x_rocket_offset = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_y_sensor to %d", mpu6050.a_x_rocket_offset);
+  else if (!strcmp(parameter, "mpu6050_accel_offset_y")) { 
+    config_this->mpu6050_accel_offset_y = atoi(value);
+    sprintf (buffer, "Set mpu6050_accel_offset_y to %d", config_this->mpu6050_accel_offset_y);
     success = true;
   }  
-  else if (!strcmp(parameter, "mpu6050_accel_offset_z_sensor")) { 
-    mpu6050.a_y_rocket_offset = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_z_sensor to %d", mpu6050.a_y_rocket_offset);
+  else if (!strcmp(parameter, "mpu6050_accel_offset_z")) { 
+    config_this->mpu6050_accel_offset_z = atoi(value);
+    sprintf (buffer, "Set mpu6050_accel_offset_z to %d", config_this->mpu6050_accel_offset_z);
+    success = true;
+  }
+  else if (!strcmp(parameter, "mpu6050_accel_sensitivity")) { 
+    config_this->mpu6050_accel_sensitivity = atoi(value);
+    sprintf (buffer, "Set mpu6050_accel_sensitivity to %d", config_this->mpu6050_accel_sensitivity);
+    success = true;
+  }
+  else if (!strcmp(parameter, "mpu6050_accel_range")) { 
+    mpu6050.accel_range = atoi(value);
+    mpu6050_set_accel_range (mpu6050.accel_range);
+    sprintf (buffer, "Set mpu6050_accel_range to %d", mpu6050.accel_range);
+    success = true;
+  }
+  else if (!strcmp(parameter, "mpu6050_gyro_range")) { 
+    mpu6050.gyro_range = atoi(value);
+    mpu6050_set_gyro_range (mpu6050.gyro_range);
+    sprintf (buffer, "Set mpu6050_gyro_range to %d", mpu6050.gyro_range);
+    success = true;
+  }
+  else if (!strcmp(parameter, "radio_enabled")) { 
+    tm_this->radio_enabled = atoi(value);
+    sprintf (buffer, "Set radio_enabled to %s", tm_this->radio_enabled?"true":"false");
     success = true;
   }  
+  else if (!strcmp(parameter, "pressure_enabled")) { 
+    tm_this->pressure_enabled = atoi(value);
+    sprintf (buffer, "Set pressure_enabled to %s", tm_this->pressure_enabled?"true":"false");
+    success = true;
+  }  
+  else if (!strcmp(parameter, "motion_enabled")) { 
+    tm_this->motion_enabled = atoi(value);
+    sprintf (buffer, "Set motion_enabled to %s", tm_this->motion_enabled?"true":"false");
+    success = true;
+  }  
+  else if (!strcmp(parameter, "gps_enabled")) { 
+    tm_this->gps_enabled = atoi(value);
+    sprintf (buffer, "Set gps_enabled to %s", tm_this->gps_enabled?"true":"false");
+    success = true;
+  }  
+  else if (!strcmp(parameter, "camera_enabled")) { 
+    tm_this->camera_enabled = atoi(value);
+    sprintf (buffer, "Set camera_enabled to %s", tm_this->camera_enabled?"true":"false");
+    success = true;
+  }
+  else if (!strcmp(parameter, "wifi_udp_enabled")) { 
+    tm_this->wifi_udp_enabled = atoi(value);
+    sprintf (buffer, "Set wifi_udp_enabled to %s", tm_this->wifi_udp_enabled?"true":"false");
+    success = true;
+  }
+  else if (!strcmp(parameter, "wifi_yamcs_enabled")) { 
+    tm_this->wifi_yamcs_enabled = atoi(value);
+    sprintf (buffer, "Set wifi_yamcs_enabled to %s", tm_this->wifi_yamcs_enabled?"true":"false");
+    success = true;
+  }
+  else if (!strcmp(parameter, "fs_enabled")) { 
+    tm_this->fs_enabled = atoi(value);
+    sprintf (buffer, "Set fs_enabled to %s", tm_this->fs_enabled?"true":"false");
+    success = true;
+  }
+  else if (!strcmp(parameter, "fs_ftp_enabled")) { 
+    tm_this->fs_ftp_enabled = atoi(value);
+    sprintf (buffer, "Set fs_ftp_enabled to %s", tm_this->fs_ftp_enabled?"true":"false");
+    success = true;
+  }
   #endif
   #ifdef PLATFORM_ESP32CAM
   else if (!strcmp(parameter, "sd_enable")) { 
@@ -1237,20 +1317,20 @@ uint16_t update_packet (uint8_t PID) {
                          break;
     case TM_RADIO:       radio.millis = millis(); 
                          packet_ctr = ++radio.packet_ctr;
-                         radio.opsmode = esp32.opsmode;                  
-                         radio.error_ctr = esp32.error_ctr + esp32cam.error_ctr;
-                         radio.warning_ctr = esp32.warning_ctr + esp32cam.warning_ctr;
-                         radio.pressure_altitude = max((uint8_t)0,(uint8_t)round(bmp280.altitude));
-                         radio.pressure_velocity_v = (int8_t)round(bmp280.velocity_v);
-                         radio.temperature = (uint8_t)round(bmp280.temperature);
-                         radio.motion_tilt = (uint8_t)round(mpu6050.tilt);
-                         radio.motion_g = (uint8_t)round(mpu6050.g*10);  
-                         radio.motion_a = (int8_t)round(mpu6050.a);
-                         radio.motion_rpm = (int8_t)round(mpu6050.rpm); 
+                         radio.opsmode = esp32.opsmode;
+                         radio.error_ctr = min(255, esp32.error_ctr + esp32cam.error_ctr);
+                         radio.warning_ctr = min(255, esp32.warning_ctr + esp32cam.warning_ctr);
+                         radio.pressure_height = max(0, min(255, (bmp280.height+50)/100));
+                         radio.pressure_velocity_v = int8_t((bmp280.velocity_v+((bmp280.velocity_v > 0) - (bmp280.velocity_v < 0))*50)/100);
+                         radio.temperature = int8_t((bmp280.temperature+((bmp280.temperature > 0) - (bmp280.temperature < 0))*50)/100);
+                         radio.motion_tilt = uint8_t((mpu6050.tilt+50)/100);
+                         radio.motion_g = uint8_t((mpu6050.g+50)/100);  
+                         radio.motion_a = int8_t((mpu6050.a+((mpu6050.a > 0) - (mpu6050.a < 0))*50)/100);
+                         radio.motion_rpm = int8_t((mpu6050.rpm+((mpu6050.rpm > 0) - (mpu6050.rpm < 0))*50)/100); 
                          radio.gps_satellites = neo6mv2.satellites;
-                         radio.gps_velocity_v = (int8_t)round(-neo6mv2.v_down/100);
-                         radio.gps_velocity = (uint8_t)round(sqrt (neo6mv2.v_north*neo6mv2.v_north + neo6mv2.v_east*neo6mv2.v_east + neo6mv2.v_down*neo6mv2.v_down) / 1000000.0);   
-                         radio.gps_altitude = max((uint8_t)0,(uint8_t)round(neo6mv2.altitude));
+                         radio.gps_velocity_v = int8_t(-(neo6mv2.v_down+((neo6mv2.v_down > 0) - (neo6mv2.v_down < 0))*50)/100);
+                         radio.gps_velocity = uint8_t(sqrt (neo6mv2.v_north*neo6mv2.v_north + neo6mv2.v_east*neo6mv2.v_east + neo6mv2.v_down*neo6mv2.v_down) / 1000000);   
+                         radio.gps_height = max(0, min(255, (neo6mv2.z+50)/100));
                          radio.camera_image_ctr = ov2640.packet_ctr;
                          radio.esp32_serial_connected = esp32.serial_connected;
                          radio.esp32_wifi_connected = esp32.wifi_connected;
@@ -1604,30 +1684,31 @@ void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) {
                            if (neo6mv2_ptr->speed_valid) {
                              json_buffer += sprintf (json_buffer, ",\"v\":[%d,%d,%d]", neo6mv2_ptr->v_north, neo6mv2_ptr->v_east, neo6mv2_ptr->v_down);
                            }
-                           if (neo6mv2_ptr->pdop_valid) {
-                             json_buffer += sprintf (json_buffer, ",\"pdop\":%d.%03d", neo6mv2_ptr->milli_pdop/1000, neo6mv2_ptr->milli_pdop%1000);
+                           if (neo6mv2_ptr->hdop_valid and neo6mv2_ptr->vdop_valid and neo6mv2_ptr->pdop_valid) {
+                             json_buffer += sprintf (json_buffer, ",\"dop\":[%u,%u,%u]", neo6mv2_ptr->milli_hdop, neo6mv2_ptr->milli_vdop, neo6mv2_ptr->milli_pdop);
                            }
                            if (neo6mv2_ptr->error_valid) {
                              json_buffer += sprintf (json_buffer, ",\"err\":[%d,%d,%d]", neo6mv2_ptr->x_err, neo6mv2_ptr->y_err, neo6mv2_ptr->z_err);
                            }
-                           json_buffer += sprintf (json_buffer, ",\"valid\":\"%d%d%d%d%d%d%d\"", neo6mv2_ptr->time_valid, neo6mv2_ptr->location_valid, neo6mv2_ptr->altitude_valid, neo6mv2_ptr->speed_valid, neo6mv2_ptr->pdop_valid, neo6mv2_ptr->error_valid, neo6mv2_ptr->offset_valid);
+                           json_buffer += sprintf (json_buffer, ",\"valid\":\"%d%d%d%d%d%d%d%d%d\"", neo6mv2_ptr->time_valid, neo6mv2_ptr->location_valid, neo6mv2_ptr->altitude_valid, neo6mv2_ptr->speed_valid, neo6mv2_ptr->hdop_valid, neo6mv2_ptr->vdop_valid, neo6mv2_ptr->pdop_valid, neo6mv2_ptr->error_valid, neo6mv2_ptr->offset_valid);
                            *json_buffer++ = '}';
                            *json_buffer++ = 0;
                          }
                          break;
     case TM_MOTION:      {
                            tm_motion_t* mpu6050_ptr = (tm_motion_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"accel\":[%.2f,%.2f,%.2f],\"gyro\":[%.2f,%.2f,%.2f],\"tilt\":%.2f,\"g\":%.2f,\"a\":%.2f,\"rpm\":%.2f}", 
+                           sprintf (json_buffer, "{\"ctr\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}", 
                                     mpu6050_ptr->packet_ctr, 
-                                    mpu6050_ptr->accel_x_rocket, mpu6050_ptr->accel_y_rocket, mpu6050_ptr->accel_z_rocket, 
-                                    mpu6050_ptr->gyro_x_rocket, mpu6050_ptr->gyro_y_rocket, mpu6050_ptr->gyro_z_rocket, 
-                                    mpu6050_ptr->tilt, mpu6050_ptr->g, mpu6050_ptr->a, mpu6050_ptr->rpm); 
+                                    mpu6050_ptr->accel_x, mpu6050_ptr->accel_y, mpu6050_ptr->accel_z, 
+                                    mpu6050_ptr->gyro_x, mpu6050_ptr->gyro_y, mpu6050_ptr->gyro_z, 
+                                    mpu6050_ptr->tilt, mpu6050_ptr->g, mpu6050_ptr->a, mpu6050_ptr->rpm,
+                                    mpu6050_ptr->accel_range, mpu6050_ptr->gyro_range, mpu6050_ptr->accel_valid, mpu6050_ptr->gyro_valid); 
                          }
                          break;
     case TM_PRESSURE:    {
                            tm_pressure_t* bmp280_ptr = (tm_pressure_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
-                           sprintf (json_buffer, "{\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f}", 
-                                    bmp280_ptr->packet_ctr, bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->altitude, bmp280_ptr->velocity_v);
+                           sprintf (json_buffer, "{\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f,\"valid\":%u}", 
+                                    bmp280_ptr->packet_ctr, bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->height, bmp280_ptr->velocity_v, bmp280_ptr->height_valid);
                          }
                          break;
     case TM_RADIO:       {
@@ -1876,7 +1957,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32.ota_enabled = (obj["act"][8] == '1')?1:0;  
                         publish_packet (TM_ESP32);
                         break;
-    case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%d,%d,%d],\"zero\":[%d,%d,%d],\"xyz\":[%d,%d,%d],\"v\":[%d,%d,%d],\"pdop\":%d.%03d,\"valid\":\"%d%d%d%d%d%d\"}
+    case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%d,%d,%d],\"zero\":[%d,%d,%d],\"xyz\":[%d,%d,%d],\"v\":[%d,%d,%d],\"dop\":[%d,%d,%d],\"valid\":\"%d%d%d%d%d%d\"}
                         neo6mv2.packet_ctr = obj["ctr"];
                         neo6mv2.status = id_of(obj["sts"], sizeof(gpsName[0]), (char*)&gpsName, sizeof(gpsName));
                         neo6mv2.satellites = obj["sats"];
@@ -1909,8 +1990,10 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                           neo6mv2.v_east = obj["v"][1];
                           neo6mv2.v_down = obj["v"][2];
                         }
-                        if (obj.containsKey("pdop")) {
-                          neo6mv2.milli_pdop = obj["pdop"]*1000;
+                        if (obj.containsKey("dop")) {
+                          neo6mv2.milli_hdop = obj["dop"][0];
+                          neo6mv2.milli_vdop = obj["dop"][1];
+                          neo6mv2.milli_pdop = obj["dop"][2];
                         }         
                         if (obj.containsKey("err")) {
                           neo6mv2.x_err = obj["err"][0];
@@ -1921,32 +2004,39 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         neo6mv2.location_valid = (obj["valid"][1] == '1')?1:0;
                         neo6mv2.altitude_valid = (obj["valid"][2] == '1')?1:0;
                         neo6mv2.speed_valid = (obj["valid"][3] == '1')?1:0;
-                        neo6mv2.pdop_valid = (obj["valid"][4] == '1')?1:0;
-                        neo6mv2.error_valid = (obj["valid"][5] == '1')?1:0;
-                        neo6mv2.offset_valid = (obj["valid"][6] == '1')?1:0;
+                        neo6mv2.hdop_valid = (obj["valid"][4] == '1')?1:0;
+                        neo6mv2.vdop_valid = (obj["valid"][5] == '1')?1:0;
+                        neo6mv2.pdop_valid = (obj["valid"][6] == '1')?1:0;
+                        neo6mv2.error_valid = (obj["valid"][7] == '1')?1:0;
+                        neo6mv2.offset_valid = (obj["valid"][8] == '1')?1:0;
                         publish_packet (TM_GPS);
                         break;
-    case TM_MOTION:     // {\"ctr\":%u,\"accel\":[%.2f,%.2f,%.2f],\"gyro\":[%.2f,%.2f,%.2f],\"tilt\":%.2f,\"g\":%.2f,\"a\":%.2f,\"rpm\":%.2f}
+    case TM_MOTION:     // {\"ctr\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}
                         mpu6050.packet_ctr = obj["ctr"];
-                        mpu6050.accel_x_rocket = obj["accel"][0];
-                        mpu6050.accel_y_rocket = obj["accel"][1];
-                        mpu6050.accel_z_rocket = obj["accel"][2];
-                        mpu6050.gyro_x_rocket = obj["gyro"][0];
-                        mpu6050.gyro_y_rocket = obj["gyro"][1];
-                        mpu6050.gyro_z_rocket = obj["gyro"][2];
+                        mpu6050.accel_x = obj["accel"][0];
+                        mpu6050.accel_y = obj["accel"][1];
+                        mpu6050.accel_z = obj["accel"][2];
+                        mpu6050.gyro_x = obj["gyro"][0];
+                        mpu6050.gyro_y = obj["gyro"][1];
+                        mpu6050.gyro_z = obj["gyro"][2];
                         mpu6050.tilt = obj["tilt"];
                         mpu6050.g = obj["g"];
                         mpu6050.a = obj["a"];
                         mpu6050.rpm = obj["rpm"];
+                        mpu6050.accel_range = obj["range"][0];
+                        mpu6050.gyro_range = obj["range"][1];
+                        mpu6050.accel_valid = obj["valid"][0];
+                        mpu6050.gyro_valid = obj["valid"][1];
                         publish_packet (TM_MOTION);
                         break;
     case TM_PRESSURE:   // {\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f}
                         bmp280.packet_ctr = obj["ctr"];
                         bmp280.pressure = obj["p"];
                         bmp280.zero_level_pressure = obj["p0"];
-                        bmp280.altitude = obj["h"];
+                        bmp280.height = obj["h"];
                         bmp280.velocity_v = obj["v_v"];
                         bmp280.temperature = obj["T"];
+                        bmp280.height_valid = obj["valid"];
                         publish_packet (TM_PRESSURE);
                         break;
     case TM_RADIO:      // {\"ctr\":%u,\"data\":\"%s\"} 
@@ -2041,26 +2131,6 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
   return true;
 }
 
-
-// RADIO FUNCTIONALITY
-
-bool radio_setup () {
-  delay(1000);
-  if (radio_tx.init()) {
-    publish_event (STS_ESP32, SS_RADIO, EVENT_INIT, "Radio transmitter initialized");
-    return true;
-  }
-  else {
-    publish_event (STS_ESP32, SS_RADIO, EVENT_ERROR, "Failed to initialize radio transmitter");
-    return false; 
-  }
-}
-
-void publish_radio () {
-  if (esp32.radio_enabled) {
-    radio_tx.send((uint8_t *)&radio, sizeof(tm_radio_t));
-  }
-}
 
 // SERIAL FUNCTIONALITY
 
