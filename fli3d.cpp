@@ -1,8 +1,10 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-10-31
+ * version: 2020-11-04 (native-ccsds branch)
  */
 
+#if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP32CAM)
+ 
 #include "fli3d.h"
 #include "secrets.h"
 #ifdef PLATFORM_ESP32CAM
@@ -2373,3 +2375,5 @@ String get_hex_str (char* blob, uint16_t length) {
 void hex_to_bin (byte* destination, char* hex_input) {
   // TODO: TBW
 }
+
+#endif
