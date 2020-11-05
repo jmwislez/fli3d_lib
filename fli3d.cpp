@@ -1,9 +1,9 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-04 (native-ccsds branch)
+ * version: 2020-11-05 (native-ccsds branch)
  */
 
-#if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP32CAM)
+#ifndef PLATFORM_ESP8266_RADIO
  
 #include "fli3d.h"
 #include "secrets.h"
@@ -37,8 +37,7 @@ extern void publish_radio ();
 #endif 
 
 ccsds_hdr_t        ccsds_hdr;
-ccsds_t            ccsds_buffer;
-ccsds_tc_t         ccsds_tc_buffer;
+ccsds_t            ccsds_tc_buffer;
 
 sts_esp32_t        sts_esp32;
 sts_esp32cam_t     sts_esp32cam;
@@ -467,7 +466,7 @@ bool fs_load_routing (const char* filename) {
 }
 
 String set_routing (char* routing_table, const char* routing_string) {
-  uint8_t PID;
+  uint16_t PID;
   String return_string;
   for (uint8_t i = 0; i < strlen (routing_string); i++) {
   	if (routing_string[i] == '0') {
@@ -870,93 +869,35 @@ bool time_check () {
 
 // TM/TC FUNCTIONALITY (serial/udp/yamcs/fs/sd)
 
-void publish_packet (uint8_t PID) {
-  static uint16_t ccsds_len, payload_len, payload_ctr;
-  static bool payload_type;
-  static byte* payload_ptr;
+void publish_packet (ccsds_t* ccsds_ptr) { 
+  static uint16_t payload_ctr;
   static uint32_t start_millis;
-  
-  // prepare packet payload
-  switch (PID) {
-    case STS_ESP32:      payload_len = sts_esp32.message_size + 6;
-                         payload_ptr = (byte*)&sts_esp32;
-                         payload_type = PKT_TM;
-                         break;
-    case STS_ESP32CAM:   payload_len = sts_esp32cam.message_size + 6;
-                         payload_ptr = (byte*)&sts_esp32cam;
-                         payload_type = PKT_TM;
-                         break;
-    case TM_ESP32:       payload_len = sizeof(tm_esp32_t);
-                         payload_ptr = (byte*)&esp32;
-                         payload_type = PKT_TM;
-                         break;
-    case TM_ESP32CAM:    payload_len = sizeof(tm_esp32cam_t);
-                         payload_ptr = (byte*)&esp32cam;
-                         payload_type = PKT_TM;
-                         break;                  
-    case TM_CAMERA:      payload_len = sizeof(tm_camera_t) - 26 + strlen (ov2640.filename) + 1;
-                         payload_ptr = (byte*)&ov2640;
-                         payload_type = PKT_TM;
-                         break;    
-    case TM_GPS:         payload_len = sizeof(tm_gps_t);
-                         payload_ptr = (byte*)&neo6mv2;
-                         payload_type = PKT_TM;
-                         break;              
-    case TM_MOTION:      payload_len = sizeof(tm_motion_t);
-                         payload_ptr = (byte*)&mpu6050;
-                         payload_type = PKT_TM;
-                         break;
-    case TM_PRESSURE:    payload_len = sizeof(tm_pressure_t);
-                         payload_ptr = (byte*)&bmp280;
-                         payload_type = PKT_TM;
-                         break;
-    case TM_RADIO:       payload_len = sizeof(tm_radio_t);
-                         payload_ptr = (byte*)&radio;
-                         payload_type = PKT_TM;
-                         break;   
-    case TM_TIMER:       payload_len = sizeof(tm_timer_t);
-                         payload_ptr = (byte*)&timer;
-                         payload_type = PKT_TM;
-                         break;
-    case TC_ESP32:       payload_len = tc_esp32.str_parameter_size + 2;
-                         payload_ptr = (byte*)&tc_esp32;
-                         payload_type = PKT_TC;
-                         break;
-    case TC_ESP32CAM:    payload_len = tc_esp32cam.str_parameter_size + 2;
-                         payload_ptr = (byte*)&tc_esp32cam;
-                         payload_type = PKT_TC;
-                         break;                                                                                                                            
-  }
-  payload_ctr = update_packet (PID);
-  
-  // prepare CCSDS packet
-  ccsds_len = sizeof(ccsds_hdr_t) + payload_len;
-  update_ccsds_hdr (PID, payload_type, payload_len);
-  memcpy (&ccsds_buffer.ccsds_hdr, &ccsds_hdr, sizeof (ccsds_hdr_t));
-  memcpy (&ccsds_buffer.blob, payload_ptr, payload_len);
-  
+  static uint16_t PID;
+
+  payload_ctr = update_packet (ccsds_ptr); // TODO: payload_ctr is not used, return PID instead?
+  PID = get_ccsds_apid (ccsds_ptr) - 42;
   // save CCSDS packet to FS (which will also act as a buffer for replay if active from the start)
   if (routing_fs[PID] and config_this->fs_enable) {
     start_millis = millis();
-    publish_fs (PID, payload_ctr, &ccsds_buffer, ccsds_len);
+    publish_fs (ccsds_ptr);
     timer.publish_fs_duration += millis() - start_millis;
   }
   // serial
   if (routing_serial[PID]) {
     start_millis = millis();
-    publish_serial (PID, payload_ctr, &ccsds_buffer, ccsds_len);
+    publish_serial (ccsds_ptr);
     timer.publish_serial_duration += millis() - start_millis;
   }
   // Yamcs
   if (routing_yamcs[PID] and config_this->wifi_enable and config_this->wifi_yamcs_enable) {
     start_millis = millis();
-    publish_yamcs (PID, payload_ctr, &ccsds_buffer, ccsds_len);
+    publish_yamcs (ccsds_ptr);
     timer.publish_yamcs_duration += millis() - start_millis;
   }
   // UDP
   if (routing_udp[PID] and config_this->wifi_enable and config_this->wifi_udp_enable) {
     start_millis = millis();
-    publish_udp (PID, payload_ctr, &ccsds_buffer, ccsds_len);
+    publish_udp (ccsds_ptr);
     timer.publish_udp_duration += millis() - start_millis;
   }
   // radio
@@ -968,16 +909,16 @@ void publish_packet (uint8_t PID) {
   // SD-card
   #ifdef PLATFORM_ESP32CAM
   if (routing_sd_json[PID] and config_this->sd_enable and config_this->sd_json_enable) {
-    publish_sd_json (PID, payload_ctr, &ccsds_buffer, ccsds_len);
+    publish_sd_json (ccsds_ptr);
   }
   if (routing_sd_ccsds[PID] and config_this->sd_enable and config_this->sd_ccsds_enable) {
-    publish_sd_ccsds (PID, payload_ctr, &ccsds_buffer, ccsds_len);
+    publish_sd_ccsds (ccsds_ptr);
   }
   #endif
-  reset_packet (PID);
+  reset_packet (ccsds_ptr);
 }
 
-void publish_event (uint8_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message) {
+void publish_event (uint16_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message) {
   switch (event_type) {
     case EVENT_ERROR:    tm_this->error_ctr++; break;  
     case EVENT_WARNING:  tm_this->warning_ctr++; break;  
@@ -988,18 +929,23 @@ void publish_event (uint8_t PID, uint8_t subsystem, uint8_t event_type, const ch
     case STS_ESP32:      sts_esp32.subsystem = subsystem;
                          sts_esp32.type = event_type;
                          strcpy (sts_esp32.message, event_message);
-                         sts_esp32.message_size = strlen (event_message) + 1;
+                         set_ccsds_len ((ccsds_t*)&sts_esp32, strlen (event_message) + 7);
+                         publish_packet ((ccsds_t*)&sts_esp32);
                          break; 
     case STS_ESP32CAM:   sts_esp32cam.subsystem = subsystem;
                          sts_esp32cam.type = event_type;
                          strcpy (sts_esp32cam.message, event_message);
-                         sts_esp32cam.message_size = strlen (event_message) + 1;
+                         set_ccsds_len ((ccsds_t*)&sts_esp32cam, strlen (event_message) + 7);
+                         publish_packet ((ccsds_t*)&sts_esp32cam);
                          break;
   }
-  publish_packet (PID);
 }
 
-bool publish_fs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
+bool publish_fs (ccsds_t* ccsds_ptr) {
+  uint16_t PID = get_ccsds_apid (ccsds_ptr) - 42;
+  uint16_t payload_ctr = get_ccsds_ctr (ccsds_ptr); 
+  uint16_t ccsds_len = get_ccsds_len (ccsds_ptr);
+  
   sprintf (path_buffer, "%s/PID_%u.raw", var_this->today_dir, PID);
   File fs_ccsds = LITTLEFS.open(path_buffer, FILE_APPEND);
   if (!fs_ccsds) {
@@ -1030,7 +976,10 @@ bool publish_fs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t
   }
 }
 
-bool publish_serial (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
+bool publish_serial (ccsds_t* ccsds_ptr) {
+  uint16_t PID = get_ccsds_apid (ccsds_ptr) - 42;
+  uint16_t payload_ctr = get_ccsds_ctr (ccsds_ptr); 
+  uint16_t ccsds_len = get_ccsds_len (ccsds_ptr);
   if (tm_this->serial_connected) {
     if (payload_ctr > var_this->serial_last_packet[PID] + 1 and tm_this->fs_enabled and routing_fs[PID]) {
       // replay batch of unsent messages (non-realtime)
@@ -1104,7 +1053,10 @@ bool publish_serial (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint
   }  
 }
   
-bool publish_yamcs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) { 
+bool publish_yamcs (ccsds_t* ccsds_ptr) { 
+  uint16_t PID = get_ccsds_apid (ccsds_ptr) - 42;
+  uint16_t payload_ctr = get_ccsds_ctr (ccsds_ptr); 
+  uint16_t ccsds_len = get_ccsds_len (ccsds_ptr);
   if (tm_this->wifi_connected) {
     if (payload_ctr > var_this->yamcs_last_packet[PID] + 1 and tm_this->wifi_yamcs_enabled and routing_fs[PID]) {
       // replay batch of unsent messages (non-realtime)
@@ -1168,7 +1120,8 @@ bool publish_yamcs (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint1
   }
 }
 
-bool publish_udp (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) { 
+bool publish_udp (ccsds_t* ccsds_ptr) { 
+  uint16_t PID = get_ccsds_apid (ccsds_ptr) - 42;
   if (tm_this->wifi_connected) {     
     build_json_str ((char*)&buffer, PID, ccsds_ptr);
     wifiUDP.beginPacket(config_network.udp_server, config_network.udp_port);
@@ -1196,7 +1149,7 @@ bool publish_udp_text (const char* message) {
 }
 
 #ifdef PLATFORM_ESP32CAM
-bool publish_sd_ccsds (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
+bool publish_sd_ccsds (ccsds_t* ccsds_ptr) {
   sprintf (path_buffer, "%s/PID_%u.raw", var_this->today_dir, PID);
   File sd_ccsds = SD_MMC.open(path_buffer, FILE_APPEND);
   if (!sd_ccsds) {
@@ -1227,7 +1180,7 @@ bool publish_sd_ccsds (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, ui
   }
 }
 
-bool publish_sd_json (uint8_t PID, uint16_t payload_ctr, ccsds_t* ccsds_ptr, uint16_t ccsds_len) {
+bool publish_sd_json (ccsds_t* ccsds_ptr) {
   sprintf (path_buffer, "%s/json.raw", var_this->today_dir);
   File sd_json = SD_MMC.open(path_buffer, FILE_APPEND);
   if (!sd_json) {
@@ -1286,9 +1239,13 @@ bool yamcs_tc_check () {
 }
 #endif
 
-uint16_t update_packet (uint8_t PID) {
+uint16_t update_packet (ccsds_t* ccsds_ptr) {
   static uint16_t packet_ctr;
-  switch (PID) {
+  ((ccsds_hdr_t*)ccsds_ptr)->seq_ctr_L++;
+  if (((ccsds_hdr_t*)ccsds_ptr)->seq_ctr_L == 0) {
+    ((ccsds_hdr_t*)ccsds_ptr)->seq_ctr_H++;
+  }
+  switch (get_ccsds_apid (ccsds_ptr) - 42) {
     #ifdef PLATFORM_ESP32
     case STS_ESP32:      sts_esp32.millis = millis();
                          packet_ctr = ++sts_esp32.packet_ctr;
@@ -1395,10 +1352,10 @@ uint16_t update_packet (uint8_t PID) {
   return (packet_ctr);
 }
 
-void reset_packet (uint8_t PID) { 
-  switch (PID) {
+void reset_packet (ccsds_t* ccsds_ptr) { 
+  switch (get_ccsds_apid (ccsds_ptr) - 42) {
     #ifdef PLATFORM_ESP32
-    case STS_ESP32:      sts_esp32.message_size = 0;
+    case STS_ESP32:      sts_esp32.message[0] = 0;
                          break;
     case TM_ESP32:       esp32.radio_rate = 0;
                          esp32.pressure_rate = 0;
@@ -1454,11 +1411,11 @@ void reset_packet (uint8_t PID) {
                          timer.publish_yamcs_duration = 0;
                          timer.publish_udp_duration = 0;
                          break;
-    case TC_ESP32CAM:    tc_esp32cam.str_parameter_size = 0;
+    case TC_ESP32CAM:    tc_esp32cam.str_parameter[0] = 0;
                          break;
     #endif
     #ifdef PLATFORM_ESP32CAM
-    case STS_ESP32CAM:   sts_esp32cam.message_size = 0;
+    case STS_ESP32CAM:   sts_esp32cam.message[0] = 0;
                          break;
     case TM_ESP32CAM:    esp32cam.udp_rate = 0;
                          esp32cam.yamcs_rate = 0;
@@ -1489,13 +1446,41 @@ void reset_packet (uint8_t PID) {
                          esp32.camera_rate++;
                          esp32.camera_active = true;
                          radio.camera_active = true;                            
-    case TC_ESP32:       tc_esp32.str_parameter_size = 0;
+    case TC_ESP32:       tc_esp32.str_parameter[0] = 0;
                          break;
     #endif
   }
 }
 
 // CCSDS FUNCTIONALITY
+
+void ccsds_init () {
+  ccsds_init_hdr ((ccsds_t*)&sts_esp32, STS_ESP32, PKT_TM, sizeof (sts_esp32_t));
+  ccsds_init_hdr ((ccsds_t*)&sts_esp32cam, STS_ESP32CAM, PKT_TM, sizeof (sts_esp32cam_t));
+  ccsds_init_hdr ((ccsds_t*)&esp32, TM_ESP32, PKT_TM, sizeof (tm_esp32_t));
+  ccsds_init_hdr ((ccsds_t*)&esp32cam, TM_ESP32CAM, PKT_TM, sizeof (tm_esp32cam_t));
+  ccsds_init_hdr ((ccsds_t*)&ov2640, TM_CAMERA, PKT_TM, sizeof (tm_camera_t));
+  ccsds_init_hdr ((ccsds_t*)&neo6mv2, TM_GPS, PKT_TM, sizeof (tm_gps_t));
+  ccsds_init_hdr ((ccsds_t*)&mpu6050, TM_MOTION, PKT_TM, sizeof (tm_motion_t));
+  ccsds_init_hdr ((ccsds_t*)&bmp280, TM_PRESSURE, PKT_TM, sizeof (tm_pressure_t));
+  ccsds_init_hdr ((ccsds_t*)&radio, TM_RADIO, PKT_TM, sizeof (tm_radio_t));
+  ccsds_init_hdr ((ccsds_t*)&timer, TM_TIMER, PKT_TM, sizeof (tm_timer_t));
+  ccsds_init_hdr ((ccsds_t*)&tc_esp32, TC_ESP32, PKT_TC, sizeof (tc_esp32_t));
+  ccsds_init_hdr ((ccsds_t*)&tc_esp32cam, TC_ESP32CAM, PKT_TC, sizeof (tc_esp32cam_t));
+}
+
+void ccsds_init_hdr (ccsds_t* ccsds_ptr, uint16_t PID, uint8_t pkt_type, uint16_t pkt_len) {
+  uint16_t APID = PID + 42;
+  uint16_t len = pkt_len - sizeof(ccsds_hdr_t) - 1;
+  (ccsds_ptr->ccsds_hdr).version = 0;
+  (ccsds_ptr->ccsds_hdr).type = pkt_type;
+  (ccsds_ptr->ccsds_hdr).sec_hdr = false;
+  (ccsds_ptr->ccsds_hdr).apid_H = (uint8_t)(APID >> 8);
+  (ccsds_ptr->ccsds_hdr).apid_L = (uint8_t)APID;
+  (ccsds_ptr->ccsds_hdr).seq_flag = 3;
+  (ccsds_ptr->ccsds_hdr).pkt_len_H = (uint8_t)(len >> 8);  
+  (ccsds_ptr->ccsds_hdr).pkt_len_L = (uint8_t)len;
+}
 
 bool valid_ccsds_hdr (ccsds_t* ccsds_ptr, bool pkt_type) {
   if (((ccsds_hdr_t*)ccsds_ptr)->version == 0 and
@@ -1513,62 +1498,56 @@ uint16_t get_ccsds_apid (ccsds_t* ccsds_ptr) {
   return (256*((ccsds_hdr_t*)ccsds_ptr)->apid_H + ((ccsds_hdr_t*)ccsds_ptr)->apid_L);
 }
 
-uint16_t get_ccsds_packet_ctr (ccsds_t* ccsds_ptr) {
+uint16_t get_ccsds_packet_ctr (ccsds_t* ccsds_ptr) { // TODO: needed?
   return (256*((ccsds_hdr_t*)ccsds_ptr)->seq_ctr_H + ((ccsds_hdr_t*)ccsds_ptr)->seq_ctr_L);
 }
 
-uint16_t get_ccsds_len (ccsds_t* ccsds_ptr) {
-  return (256*((ccsds_hdr_t*)ccsds_ptr)->pkt_len_H + ((ccsds_hdr_t*)ccsds_ptr)->pkt_len_L + 1);
+uint16_t get_ccsds_len (ccsds_t* ccsds_ptr) { // TODO: rename get_ccsds_packet_len
+  return (sizeof (ccsds_hdr_t) + 256*((ccsds_hdr_t*)ccsds_ptr)->pkt_len_H + ((ccsds_hdr_t*)ccsds_ptr)->pkt_len_L + 1);
 }
 
+void set_ccsds_len (ccsds_t* ccsds_ptr, uint16_t len) { // TODO: does not take hdr into account while get_ccsds_len does ... rename set_ccsds_payload_len
+  (ccsds_ptr->ccsds_hdr).pkt_len_H = (uint8_t)((len - 1) >> 8);  
+  (ccsds_ptr->ccsds_hdr).pkt_len_L = (uint8_t)(len - 1);
+}
+  
 uint32_t get_ccsds_millis (ccsds_t* ccsds_ptr) {
   return (65536*(uint8_t)*((byte*)ccsds_ptr+8)+256*(uint8_t)*((byte*)ccsds_ptr+7)+(uint8_t)*((byte*)ccsds_ptr+6));
 }
 
-void update_ccsds_hdr (uint8_t PID, bool pkt_type, uint16_t pkt_len) {
-  static uint16_t ccsds_ctr[NUMBER_OF_PID];
-  ccsds_ctr[PID]++;
-  ccsds_hdr.version = 0;
-  ccsds_hdr.type = pkt_type;
-  ccsds_hdr.sec_hdr = false;
-  ccsds_hdr.apid_H = (uint8_t)((PID + 42) >> 8);
-  ccsds_hdr.apid_L = (uint8_t)(PID + 42);
-  ccsds_hdr.seq_flag = 3;
-  ccsds_hdr.seq_ctr_H = (uint8_t)(ccsds_ctr[PID] >> 8);
-  ccsds_hdr.seq_ctr_L = (uint8_t)ccsds_ctr[PID];
-  ccsds_hdr.pkt_len_H = (uint8_t)((pkt_len - 1) >> 8);
-  ccsds_hdr.pkt_len_L = (uint8_t)(pkt_len - 1);
+uint32_t get_ccsds_ctr (ccsds_t* ccsds_ptr) {
+  return (256*(uint8_t)*((byte*)ccsds_ptr+10)+(uint8_t)*((byte*)ccsds_ptr+9));
 }
 
 void parse_ccsds (ccsds_t* ccsds_ptr) {     
   if (valid_ccsds_hdr (ccsds_ptr, PKT_TM)) {
     switch (get_ccsds_apid (ccsds_ptr) - 42) {
-      case STS_OTHER:      memcpy (sts_other, &ccsds_ptr->blob, get_ccsds_len(ccsds_ptr));
-                           publish_packet (STS_OTHER);
+      case STS_OTHER:      memcpy (sts_other, ccsds_ptr, get_ccsds_len(ccsds_ptr));
+                           publish_packet ((ccsds_t*)sts_other);
                            break;
-      case TM_OTHER:       memcpy (tm_this, &ccsds_ptr->blob, get_ccsds_len(ccsds_ptr));
-                           publish_packet (TM_OTHER);
+      case TM_OTHER:       memcpy (tm_this, ccsds_ptr, get_ccsds_len(ccsds_ptr));
+                           publish_packet ((ccsds_t*)tm_other);
                            break;
       #ifdef PLATFORM_ESP32
-      case TM_CAMERA:      memcpy (&ov2640, &ccsds_ptr->blob, sizeof(tm_camera_t));
-                           publish_packet (TM_CAMERA);
+      case TM_CAMERA:      memcpy (&ov2640, ccsds_ptr, sizeof(tm_camera_t));
+                           publish_packet ((ccsds_t*)&ov2640);
                            break;
       #endif
       #ifdef PLATFORM_ESP32CAM
-      case TM_GPS:         memcpy (&neo6mv2, &ccsds_ptr->blob, sizeof(tm_gps_t));
-                           publish_packet (TM_GPS);
+      case TM_GPS:         memcpy (&neo6mv2, ccsds_ptr, sizeof(tm_gps_t));
+                           publish_packet ((ccsds_t*)&neo6mv2);
                            break;
-      case TM_MOTION:      memcpy (&mpu6050, &ccsds_ptr->blob, sizeof(tm_motion_t));
-                           publish_packet (TM_MOTION);
+      case TM_MOTION:      memcpy (&mpu6050, ccsds_ptr, sizeof(tm_motion_t));
+                           publish_packet ((ccsds_t*)&mpu6050);
                            break;
-      case TM_PRESSURE:    memcpy (&bmp280, &ccsds_ptr->blob, sizeof(tm_pressure_t));
-                           publish_packet (TM_PRESSURE);
+      case TM_PRESSURE:    memcpy (&bmp280, ccsds_ptr, sizeof(tm_pressure_t));
+                           publish_packet ((ccsds_t*)&bmp280);
                            break;
-      case TM_RADIO:       memcpy (&radio, &ccsds_ptr->blob, sizeof(tm_radio_t));
-                           publish_packet (TM_RADIO);
+      case TM_RADIO:       memcpy (&radio, ccsds_ptr, sizeof(tm_radio_t));
+                           publish_packet ((ccsds_t*)&radio);
                            break;
-      case TM_TIMER:       memcpy (&timer, &ccsds_ptr->blob, sizeof(tm_timer_t));
-                           publish_packet (TM_TIMER);
+      case TM_TIMER:       memcpy (&timer, ccsds_ptr, sizeof(tm_timer_t));
+                           publish_packet ((ccsds_t*)&timer);
                            break;                           
       #endif
       default:             sprintf (buffer, "Received TM packet with unexpected APID %d", get_ccsds_apid (ccsds_ptr));
@@ -1578,8 +1557,7 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
   }
   else if (valid_ccsds_hdr (ccsds_ptr, PKT_TC)) {
     switch (get_ccsds_apid (ccsds_ptr) - 42) {
-      case TC_THIS:        memcpy (tc_this, &ccsds_ptr->blob, get_ccsds_len(ccsds_ptr));
-                           tc_this->str_parameter_size = get_ccsds_len(ccsds_ptr) - 2;
+      case TC_THIS:        memcpy (tc_this, ccsds_ptr, get_ccsds_len(ccsds_ptr));
                            sprintf (buffer, "Received TC for %s with cmd_id %u", subsystemName[SS_THIS], tc_this->cmd_id);
                            publish_event (STS_THIS, SS_THIS, EVENT_CMD_ACK, buffer);
                            switch (tc_this->cmd_id) {
@@ -1600,9 +1578,8 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
                                                          break;
                            }
                            break;
-      case TC_OTHER   :    memcpy (tc_other, &ccsds_ptr->blob, get_ccsds_len(ccsds_ptr));
-                           tc_other->str_parameter_size = get_ccsds_len(ccsds_ptr) - 2;
-                           publish_packet (TC_OTHER);
+      case TC_OTHER   :    memcpy (tc_other, ccsds_ptr, get_ccsds_len(ccsds_ptr));
+                           publish_packet ((ccsds_t*)tc_other);
                            break;
       default:             sprintf (buffer, "Received TC packet with unexpected APID %d", get_ccsds_apid (ccsds_ptr));
                            publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
@@ -1617,7 +1594,7 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
 
 // JSON FUNCTIONALITY
 
-void build_json_str (char* json_buffer, uint8_t PID, ccsds_t* ccsds_ptr) {
+void build_json_str (char* json_buffer, uint16_t PID, ccsds_t* ccsds_ptr) { // TODO: remove PID as parameter
   switch (PID) {
     case STS_ESP32:      { 
                            sts_esp32_t* sts_esp32_ptr = (sts_esp32_t*)((byte*)ccsds_ptr + sizeof(ccsds_hdr_t));
@@ -1779,8 +1756,8 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         sts_esp32cam.type = id_of ((const char*)obj["type"], sizeof(eventName[0]), (char*)&eventName, sizeof(eventName));
                         sts_esp32cam.subsystem = id_of ((const char*)obj["ss"], sizeof(subsystemName[0]), (char*)&subsystemName, sizeof(subsystemName));
                         strcpy (sts_esp32cam.message, obj["msg"]);
-                        sts_esp32cam.message_size = strlen (sts_esp32cam.message);
-                        publish_packet (STS_ESP32CAM);
+                        set_ccsds_len ((ccsds_t*)&sts_esp32cam, strlen (sts_esp32cam.message) + 7);
+                        publish_packet ((ccsds_t*)&sts_esp32cam);
                         break;                        
     case TM_ESP32CAM:   // {\"ctr\":%u,\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u,%u],\"buf\":[%u,%u],\"rate\":[%u,%u,%u,%u,%u,%u,%u,%u,%u],\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}
                         esp32cam.packet_ctr = obj["ctr"];
@@ -1827,7 +1804,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32cam.sd_active = (obj["act"][2] == '1')?1:0;           
                         esp32cam.ftp_active = (obj["act"][3] == '1')?1:0;           
                         esp32cam.ota_enabled = (obj["act"][4] == '1')?1:0;           
-                        publish_packet (TM_ESP32CAM);
+                        publish_packet ((ccsds_t*)&esp32cam);
                         break;                                                                                                                          
     case TM_CAMERA:     // {\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}
                         ov2640.packet_ctr = obj["ctr"];
@@ -1839,7 +1816,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         ov2640.exposure_ms = obj["ms"]["exp"];
                         ov2640.sd_ms = obj["ms"]["sd"];
                         ov2640.wifi_ms = obj["ms"]["wifi"];
-                        publish_packet (TM_CAMERA);
+                        publish_packet ((ccsds_t*)&ov2640);
                         break;
     case TC_ESP32:      // execute command
                         if (!strcmp(obj["cmd"], "reboot")) {
@@ -1872,30 +1849,31 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         switch (tc_esp32cam.cmd_id) {
                           case TC_REBOOT:        // {"cmd":"reboot","subsystem":0|1|2}
                                                  tc_esp32cam.int_parameter = atoi (obj["subsystem"]);
-                                                 tc_esp32cam.str_parameter_size = 0;
+                                                 tc_esp32cam.str_parameter[0] = 0;
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32cam, 7);
                                                  break;
-                         case TC_LOAD_CONFIG:   // {"cmd":"load_config","filename":"xxxxxx.cfg"}
+                          case TC_LOAD_CONFIG:   // {"cmd":"load_config","filename":"xxxxxx.cfg"}
                                                  tc_esp32cam.int_parameter = 0;
                                                  strcpy (tc_esp32cam.str_parameter, obj["filename"]);
-                                                 tc_esp32cam.str_parameter_size = strlen (tc_esp32cam.str_parameter);
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32cam, strlen (tc_esp32cam.str_parameter) + 7);
                                                  break;
                           case TC_LOAD_ROUTING:  // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
                                                  tc_esp32cam.int_parameter = 0;
                                                  strcpy (tc_esp32cam.str_parameter, obj["filename"]);
-                                                 tc_esp32cam.str_parameter_size = strlen (tc_esp32cam.str_parameter);
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32cam, strlen (tc_esp32cam.str_parameter) + 7);
                                                  break;
                           case TC_SET_PARAMETER: // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
                                                  tc_esp32cam.int_parameter = 0;
                                                  strcpy ((char*)&tc_esp32cam.str_parameter, obj["parameter"]);
                                                  tc_esp32cam.str_parameter[strlen (obj["parameter"])] = 0;
                                                  strcpy ((char*)(&tc_esp32cam.str_parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
-                                                 tc_esp32cam.str_parameter_size = strlen (obj["parameter"]) + strlen (obj["value"]) + 1;
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32cam, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32CAM not understood");
                                                  return false;
                             
                         }
-                        publish_packet (TC_ESP32CAM);
+                        publish_packet ((ccsds_t*)&tc_esp32cam);
                         break;
     #endif
     #ifdef PLATFORM_ESP32CAM
@@ -1905,7 +1883,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         sts_esp32.subsystem = id_of ((const char*)obj["ss"], sizeof(subsystemName[0]), (char*)&subsystemName, sizeof(subsystemName));
                         strcpy (sts_esp32.message, obj["msg"]);
                         sts_esp32.message_size = strlen (sts_esp32.message);
-                        publish_packet (STS_ESP32);
+                        publish_packet ((ccsds_t*)&sts_esp32);
                         break;
     case TM_ESP32:      // {\"ctr\":%u,\"mode\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u],\"buf\":[%u,%u],\"inst_rate\":[%u,%u,%u,%u,%u],\"comm_rate\":[%u,%u,%u,%u,%u],\"sep\":%d,\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}
                         esp32.packet_ctr = obj["ctr"];
@@ -1957,7 +1935,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32.sd_active = (obj["act"][6] == '1')?1:0;           
                         esp32.ftp_active = (obj["act"][7] == '1')?1:0;           
                         esp32.ota_enabled = (obj["act"][8] == '1')?1:0;  
-                        publish_packet (TM_ESP32);
+                        publish_packet ((ccsds_t*)&esp32);
                         break;
     case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%d,%d,%d],\"zero\":[%d,%d,%d],\"xyz\":[%d,%d,%d],\"v\":[%d,%d,%d],\"dop\":[%d,%d,%d],\"valid\":\"%d%d%d%d%d%d\"}
                         neo6mv2.packet_ctr = obj["ctr"];
@@ -2011,7 +1989,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         neo6mv2.pdop_valid = (obj["valid"][6] == '1')?1:0;
                         neo6mv2.error_valid = (obj["valid"][7] == '1')?1:0;
                         neo6mv2.offset_valid = (obj["valid"][8] == '1')?1:0;
-                        publish_packet (TM_GPS);
+                        publish_packet ((ccsds_t*)&neo6mv2);
                         break;
     case TM_MOTION:     // {\"ctr\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}
                         mpu6050.packet_ctr = obj["ctr"];
@@ -2029,7 +2007,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         mpu6050.gyro_range = obj["range"][1];
                         mpu6050.accel_valid = obj["valid"][0];
                         mpu6050.gyro_valid = obj["valid"][1];
-                        publish_packet (TM_MOTION);
+                        publish_packet ((ccsds_t*)&mpu6050);
                         break;
     case TM_PRESSURE:   // {\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f}
                         bmp280.packet_ctr = obj["ctr"];
@@ -2039,12 +2017,12 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         bmp280.velocity_v = obj["v_v"];
                         bmp280.temperature = obj["T"];
                         bmp280.height_valid = obj["valid"];
-                        publish_packet (TM_PRESSURE);
+                        publish_packet ((ccsds_t*)&bmp280);
                         break;
     case TM_RADIO:      // {\"ctr\":%u,\"data\":\"%s\"} 
                         radio.packet_ctr = obj["ctr"];
                         hex_to_bin (&radio, obj["data"]);
-                        publish_packet (TM_RADIO);
+                        publish_packet ((ccsds_t*)&radio);
                         break;
     case TM_TIMER:      // {\"ctr\":%u,\"idle\":%u,\"instr\":[%u,%u,%u,%u,%u],\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u]}
                         timer.packet_ctr = obj["ctr"];
@@ -2063,27 +2041,31 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         timer.publish_serial_duration = obj["pub"][1];
                         timer.publish_yamcs_duration = obj["pub"][2];
                         timer.publish_udp_duration = obj["pub"][3];
-                        publish_packet (TM_TIMER);
+                        publish_packet ((ccsds_t*)&timer);
                         break;
     case TC_ESP32:      // forward command
                         tc_esp32.cmd_id = id_of (obj["cmd"], sizeof(tcName[0]), (char*)tcName, sizeof(tcName));
                         switch (tc_esp32.cmd_id) {
                           case TC_REBOOT:        // {"cmd":"reboot","subsystem":0|1|2}
                                                  tc_esp32.int_parameter = obj["subsystem"];
-                                                 tc_esp32.str_parameter_size = 0;
+                                                 tc_esp32.str_parameter[0] = 0;
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32, 7);
                                                  break;
                           case TC_SET_OPSMODE:   // {"cmd":"set_opsmode","opsmode":"checkout|ready|static"}
                                                  tc_esp32.int_parameter = id_of (obj["opsmode"], sizeof(modeName[0]), (char*)modeName, sizeof(modeName))
-                                                 tc_esp32.str_parameter_size = 0;
+                                                 tc_esp32.str_parameter[0] = 0;
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32, 7);
                                                  break;
                           case TC_LOAD_CONFIG:   // {"cmd":"load_config","filename":"xxxxxx.cfg"}
                                                  tc_esp32.int_parameter = 0;
                                                  strcpy (tc_esp32.str_parameter, obj["filename"]);
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32, strlen (sts_esp32cam.str_parameter) + 7);
                                                  tc_esp32.str_parameter_size = strlen (tc_esp32.str_parameter);
                                                  break;
                           case TC_LOAD_ROUTING:  // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
                                                  tc_esp32.int_parameter = 0;
                                                  strcpy (tc_esp32.str_parameter, obj["filename"]);
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32, strlen (sts_esp32cam.str_parameter) + 7);
                                                  tc_esp32.str_parameter_size = strlen (esp32.str_parameter);
                                                  break;
                           case TC_SET_PARAMETER: // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
@@ -2091,13 +2073,13 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                                                  strcpy ((char*)&tc_esp32.str_parameter, obj["parameter"]);
                                                  tc_esp32.str_parameter[strlen (obj["parameter"])] = 0;
                                                  strcpy ((char*)(&tc_esp32.str_parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
-                                                 tc_esp32.str_parameter_size = strlen (obj["parameter"]) + strlen (obj["value"]) + 1;
+                                                 set_ccsds_len ((ccsds_t*)&tc_esp32, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32 not understood");
                                                  return false;
                             
                         }
-                        publish_packet (TC_ESP32);
+                        publish_packet ((ccsds_t*)&tc_esp32);
                         break;
     case TC_ESP32CAM:   // execute command
                         if (!strcmp(obj["cmd"], "reboot")) {
@@ -2298,14 +2280,16 @@ bool cmd_reboot (uint8_t subsystem) {
             publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
             tc_other->cmd_id = TC_REBOOT;
             tc_other->int_parameter = 0;
-            tc_other->str_parameter_size = 0;
-            publish_packet (TC_OTHER);
+            tc_other->str_parameter[0] = 0;
+            set_ccsds_len ((ccsds_t*)tc_other, 7); 
+            publish_packet ((ccsds_t*)tc_other);
             break;
     case 2: // both
             tc_other->cmd_id = TC_REBOOT;
             tc_other->int_parameter = 0;
-            tc_other->str_parameter_size = 0;
-            publish_packet (TC_OTHER);
+            tc_other->str_parameter[0] = 0;
+            set_ccsds_len ((ccsds_t*)tc_other, 7); 
+            publish_packet ((ccsds_t*)tc_other);
             sprintf (buffer, "Sending reboot command to %s and rebooting %s subsystem", subsystemName[SS_OTHER], subsystemName[SS_THIS]);
             publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
             delay (1000);
@@ -2344,7 +2328,7 @@ bool cmd_load_routing (const char* filename) {
   fs_load_routing (filename);
 }
 
-bool cmd_toggle_routing (uint8_t PID, const char interface) {
+bool cmd_toggle_routing (uint16_t PID, const char interface) {
   // TODO: TBW + integrate
 }
 

@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-04 (native-ccsds branch)
+ * version: 2020-11-05 (native-ccsds branch)
  */
  
 #ifndef _FLI3D_H_
@@ -15,7 +15,7 @@
 
 //#define ASYNCUDP // uncomment to use AsyncUDP for commanding
 
-#if defined(PLATFORM_ESP32) || defined(PLATFORM_ESP32CAM)
+#ifndef PLATFORM_ESP8266_RADIO
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -197,30 +197,21 @@ extern const char gpsStatusName[9][11];
 // TM/TC packet definitions
 
 struct __attribute__ ((packed)) ccsds_hdr_t {
-  uint8_t  apid_H:3;                // 0:5
-  bool     sec_hdr:1;               // 0: 4
-  bool     type:1;                  // 0:  3
-  uint8_t  version:3;               // 0:   0
-  uint8_t  apid_L;                  // 1
-  uint8_t  seq_ctr_H:6;             // 2:2
-  uint8_t  seq_flag:2;              // 2: 0
-  uint8_t  seq_ctr_L;               // 3
-  uint8_t  pkt_len_H;               // 4
-  uint8_t  pkt_len_L;               // 5
+  uint8_t     apid_H:3;                // 0:5
+  bool        sec_hdr:1;               // 0: 4
+  bool        type:1;                  // 0:  3
+  uint8_t     version:3;               // 0:   0
+  uint8_t     apid_L;                  // 1
+  uint8_t     seq_ctr_H:6;             // 2:2
+  uint8_t     seq_flag:2;              // 2: 0
+  uint8_t     seq_ctr_L;               // 3
+  uint8_t     pkt_len_H;               // 4
+  uint8_t     pkt_len_L;               // 5
 }; 
 
-struct __attribute__ ((packed)) ccsds_t { // TODO: still needed?
-  byte     ccsds_hdr[6];
-  byte     blob[JSON_MAX_SIZE];
-  uint8_t  blob_size;
-  uint8_t  PID;
-};
-
-struct __attribute__ ((packed)) ccsds_tc_t { // TODO: still needed?
-  byte     ccsds_hdr[6];
-  uint8_t  cmd_id;
-  uint8_t  int_parameter;
-  char     str_parameter[JSON_MAX_SIZE];
+struct __attribute__ ((packed)) ccsds_t {
+  ccsds_hdr_t ccsds_hdr;
+  byte        blob[JSON_MAX_SIZE+6];   // sized for longest possible sts_esp32/sts_esp32cam packet
 };
 
 struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
@@ -296,7 +287,7 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool        camera_active:1;         //     3
   bool        fs_active:1;             //      2
   bool        ftp_active:1;            //       1
-  bool        ota_enabled:1;            //        0 
+  bool        ota_enabled:1;           //        0 
 };
 
 struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
@@ -349,7 +340,7 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool        fs_active:1;             //  6
   bool        sd_active:1;             //   5
   bool        ftp_active:1;            //    4
-  bool        ota_enabled:1;            //     3
+  bool        ota_enabled:1;           //     3
   bool        free_42:1;               //      2 - free to assign 
   bool        free_41:1;               //       1 - free to assign 
   bool        free_40:1;               //        0 - free to assign 
@@ -657,6 +648,7 @@ extern tc_esp32_t         tc_esp32;
 extern tc_esp32cam_t      tc_esp32cam;
 
 extern var_timer_t        var_timer;
+extern config_network_t   config_network;
 extern config_esp32_t     config_esp32;
 extern config_esp32cam_t  config_esp32cam;
 
@@ -706,7 +698,7 @@ extern bool wifi_check ();
 extern bool time_check ();
 
 // TM/TC FUNCTIONALITY
-extern void publish_event (uint8_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message);
+extern void publish_event (uint16_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message);
 extern void publish_packet (ccsds_t* ccsds_ptr);
 extern bool publish_fs (ccsds_t* ccsds_ptr);
 extern bool publish_serial (ccsds_t* ccsds_ptr);
@@ -725,16 +717,20 @@ extern uint16_t update_packet (ccsds_t* ccsds_ptr);
 extern void reset_packet (ccsds_t* ccsds_ptr);
 
 // CCSDS FUNCTIONALITY
+extern void ccsds_init ();
+extern void ccsds_init_hdr (ccsds_t* ccsds_ptr, uint16_t PID, uint8_t pkt_type, uint16_t pkt_len);
 extern bool valid_ccsds_hdr (ccsds_t* ccsds_ptr, bool pkt_type);
 extern uint16_t get_ccsds_apid (ccsds_t* ccsds_ptr);
 extern uint16_t get_ccsds_packet_ctr (ccsds_t* ccsds_ptr);
 extern uint16_t get_ccsds_len (ccsds_t* ccsds_ptr);
+extern void set_ccsds_len (ccsds_t* ccsds_ptr, uint16_t len);
 extern uint32_t get_ccsds_millis (ccsds_t* ccsds_ptr);
+extern uint32_t get_ccsds_ctr (ccsds_t* ccsds_ptr);
 extern void update_ccsds_hdr (ccsds_t* ccsds_ptr, bool pkt_type, uint16_t pkt_len);
 extern void parse_ccsds (ccsds_t* ccsds_ptr);
 
 // JSON FUNCTIONALITY
-extern void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr);
+extern void build_json_str (char* json_buffer, uint16_t PID, ccsds_t* ccsds_ptr);
 extern bool parse_json (const char* json_string);
 
 // SERIAL FUNCTIONALITY
@@ -747,7 +743,7 @@ extern bool cmd_set_opsmode (uint8_t opsmode);
 extern bool cmd_load_config (const char* filename);
 extern bool cmd_load_routing (const char* filename);
 extern bool cmd_set_parameter (const char* parameter, const char* value);
-extern bool cmd_toggle_routing (uint8_t PID, const char interface);
+extern bool cmd_toggle_routing (uint16_t PID, const char interface);
 
 // SUPPORT FUNCTIONS
 extern uint8_t id_of (const char* string, uint8_t string_len, const char* array_of_strings, uint16_t array_len);
