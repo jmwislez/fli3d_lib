@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-05 (native-ccsds branch)
+ * version: 2020-11-08 (fs-optimisation branch)
  */
  
 #ifndef _FLI3D_H_
@@ -23,16 +23,12 @@
 #ifdef ASYNCUDP
 #include <AsyncUDP.h>
 #endif
-#include <ESPFtpServer.h>
 #include <NTPClient.h>
 #include <LinkedList.h>
-#include <Arduino.h>
-#include <RH_ASK.h>
 #include <ArduinoJson.h>
-#include "FS.h"
-#ifdef ESP32
+#include <ESPFtpServer.h>
+#include <FS.h>
 #include <LITTLEFS.h>
-#endif
 
 #define SerialBaud                115200
 #define JSON_MAX_SIZE             512
@@ -516,29 +512,6 @@ struct __attribute__ ((packed)) tm_timer_t { // APID: 51 (33)
   uint16_t    publish_udp_duration;
 };
 
-struct __attribute__ ((packed)) var_timer_t {
-  uint32_t    next_second;
-  uint32_t    next_radio_time;
-  uint32_t    next_pressure_time;
-  uint32_t    next_motion_time;
-  uint32_t    next_gps_time;
-  uint32_t    next_wifi_time;
-  uint32_t    next_ntp_time;
-  uint32_t    last_serial_in_millis;
-  uint32_t    last_serial_out_millis;
-  uint16_t    radio_interval;
-  uint16_t    pressure_interval;
-  uint16_t    motion_interval;
-  uint16_t    gps_interval;
-  bool        do_radio:1;
-  bool        do_pressure:1;
-  bool        do_motion:1;
-  bool        do_gps:1; 
-  bool        do_time:1;
-  bool        do_wifi:1;
-  bool        do_ntp:1;
-}; 
-
 struct __attribute__ ((packed)) tc_esp32_t { // APID: 52 (34)
   ccsds_hdr_t ccsds_hdr;
   uint8_t     cmd_id;
@@ -600,13 +573,6 @@ struct __attribute__ ((packed)) config_esp32_t {
   bool        gps_udp_raw_enable:1;
 };
 
-struct __attribute__ ((packed)) var_esp32_t { 
-  char        today_dir[20];
-  uint16_t    fs_last_packet[NUMBER_OF_PID];
-  uint16_t    serial_last_packet[NUMBER_OF_PID];
-  uint16_t    yamcs_last_packet[NUMBER_OF_PID];
-};
-
 struct __attribute__ ((packed)) config_esp32cam_t {
   char        config_file[20];
   char        routing_file[20];
@@ -626,13 +592,35 @@ struct __attribute__ ((packed)) config_esp32cam_t {
   bool        ota_enable:1;
 };
 
-struct __attribute__ ((packed)) var_esp32cam_t { 
-  char     today_dir[20];
-  uint16_t    fs_last_packet[NUMBER_OF_PID];
-  uint16_t    serial_last_packet[NUMBER_OF_PID];
-  uint16_t    yamcs_last_packet[NUMBER_OF_PID];
-  uint16_t    sd_ccsds_last_packet[NUMBER_OF_PID];
+struct __attribute__ ((packed)) var_timer_t {
+  uint32_t    next_second;
+  uint32_t    next_radio_time;
+  uint32_t    next_pressure_time;
+  uint32_t    next_motion_time;
+  uint32_t    next_gps_time;
+  uint32_t    next_wifi_time;
+  uint32_t    next_ntp_time;
+  uint32_t    last_serial_in_millis;
+  uint32_t    last_serial_out_millis;
+  uint16_t    radio_interval;
+  uint16_t    pressure_interval;
+  uint16_t    motion_interval;
+  uint16_t    gps_interval;
+  bool        do_radio:1;
+  bool        do_pressure:1;
+  bool        do_motion:1;
+  bool        do_gps:1; 
+  bool        do_time:1;
+  bool        do_wifi:1;
+  bool        do_ntp:1;
+}; 
+
+struct __attribute__ ((packed)) buffer_t { 
+  uint16_t    packet_len;
+  uint32_t    fs_offset;
+  bool        fs_saved;
 };
+
 
 extern sts_esp32_t        sts_esp32;
 extern sts_esp32cam_t     sts_esp32cam;
@@ -673,6 +661,7 @@ extern config_esp32cam_t* config_this;
 
 extern char buffer[JSON_MAX_SIZE];
 
+
 // FS FUNCTIONALITY
 extern bool fs_setup ();
 extern bool ftp_setup ();
@@ -680,6 +669,7 @@ extern bool ftp_check ();
 extern uint16_t fs_free ();
 #ifdef PLATFORM_ESP32CAM
 extern uint16_t sd_free ();
+extern bool fs_sync ();
 #endif
 
 // CONFIGURATION FUNCTIONALITY
@@ -718,15 +708,15 @@ extern void reset_packet (ccsds_t* ccsds_ptr);
 
 // CCSDS FUNCTIONALITY
 extern void ccsds_init ();
-extern void ccsds_init_hdr (ccsds_t* ccsds_ptr, uint16_t PID, uint8_t pkt_type, uint16_t pkt_len);
+extern void ccsds_hdr_init (ccsds_t* ccsds_ptr, uint16_t PID, uint8_t pkt_type, uint16_t pkt_len);
 extern bool valid_ccsds_hdr (ccsds_t* ccsds_ptr, bool pkt_type);
-extern uint16_t get_ccsds_apid (ccsds_t* ccsds_ptr);
-extern uint16_t get_ccsds_packet_ctr (ccsds_t* ccsds_ptr);
-extern uint16_t get_ccsds_len (ccsds_t* ccsds_ptr);
-extern void set_ccsds_len (ccsds_t* ccsds_ptr, uint16_t len);
-extern uint32_t get_ccsds_millis (ccsds_t* ccsds_ptr);
-extern uint32_t get_ccsds_ctr (ccsds_t* ccsds_ptr);
 extern void update_ccsds_hdr (ccsds_t* ccsds_ptr, bool pkt_type, uint16_t pkt_len);
+extern uint16_t get_ccsds_apid (ccsds_t* ccsds_ptr);
+extern uint32_t get_ccsds_ctr (ccsds_t* ccsds_ptr);
+extern uint16_t get_ccsds_packet_len (ccsds_t* ccsds_ptr);
+extern void set_ccsds_payload_len (ccsds_t* ccsds_ptr, uint16_t len);
+extern uint16_t get_ccsds_packet_ctr (ccsds_t* ccsds_ptr);
+extern uint32_t get_ccsds_millis (ccsds_t* ccsds_ptr);
 extern void parse_ccsds (ccsds_t* ccsds_ptr);
 
 // JSON FUNCTIONALITY
