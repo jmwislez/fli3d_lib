@@ -669,8 +669,8 @@ extern bool ftp_check ();
 extern uint16_t fs_free ();
 #ifdef PLATFORM_ESP32CAM
 extern uint16_t sd_free ();
-extern bool fs_sync ();
 #endif
+extern bool fs_sync ();
 
 // CONFIGURATION FUNCTIONALITY
 extern void load_default_config ();

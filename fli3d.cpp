@@ -29,6 +29,7 @@ char serial_buffer[JSON_MAX_SIZE];
 char path_buffer[32];
 char today_dir[16];
 buffer_t fs_buffer;
+ccsds_t replay_buffer;
 
 extern void ota_setup ();
 #ifdef PLATFORM_ESP32
@@ -104,7 +105,7 @@ char routing_sd_ccsds[NUMBER_OF_PID];
 
 bool fs_setup () {
   if (LITTLEFS.begin(false)) {
-    if (LITTLEFS.totalBytes()-LITTLEFS.usedBytes() <= 4096) {
+    if (LITTLEFS.totalBytes()-LITTLEFS.usedBytes() <= 8192) {
       // FS is full, delete old data 
       #ifdef PLATFORM_ESP32
       if (!esp32.separation_sts) { // old data will only be deleted from ESP32 module if SEP_STS_PIN is connected to GND (Fli3d mated to rocket)
@@ -131,23 +132,12 @@ bool fs_setup () {
         }
         file = dir.openNextFile ();
         }
-        tm_this->fs_enabled = true;
+        tm_this->fs_enabled = true; // needed to have next message stored
         publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "Deleted all data files since FS is full");
       }
       else {
         publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "FS is full, but data not deleted because this is enhibited");
       }
-    }
-    // ensure there are no stale log files
-    File dir = LITTLEFS.open ("/");
-    File file = dir.openNextFile ();
-    while (file) {
-      if (!strcmp(file.name(), "/json.log") or strstr(file.name(), ".raw")) {
-        sprintf (path_buffer, "%s", file.name());
-        file.close ();
-        LITTLEFS.remove (path_buffer);
-      }
-      file = dir.openNextFile ();
     }
     tm_this->fs_enabled = true;
     tm_this->fs_active = true;
@@ -191,39 +181,29 @@ bool ftp_check () {
 
 void fs_create_today_dir () {
   char sequencer = 'A';
-  char local_path_buffer[32];
+  fs_sync ();
   while (LITTLEFS.exists(today_dir)) {
     sprintf (today_dir, "/%s%s%s%c", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer++);
   }
   LITTLEFS.mkdir(today_dir);
-  File dir = LITTLEFS.open ("/");
-  File file = dir.openNextFile ();
-  while (file) {
-    if (!strcmp(file.name(), "/json.log") or strstr(file.name(), ".raw")) {
-      sprintf (local_path_buffer, "%s", file.name());
-      sprintf (path_buffer, "%s/%s", today_dir, file.name());
-      file.close ();
-      LITTLEFS.rename (local_path_buffer, path_buffer);
-    }
-    file = dir.openNextFile ();
-  }
-  sprintf (buffer, "Created storage directory %s for current session, and moved current log files to it", today_dir);
+  if (LITTLEFS.exists("/ccsds.raw")) {
+    sprintf (path_buffer, "%s/%s", today_dir, "/ccsds.raw");
+    LITTLEFS.rename ("/ccsds.raw", path_buffer);
+  }   
+  sprintf (buffer, "Created storage directory %s for current session, and moved current CCSDS log file to it", today_dir);
   publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
   tm_this->fs_active = true;
 }
 
 uint16_t fs_free () {
   if (config_this->fs_enable) {
-    if (LITTLEFS.totalBytes()-LITTLEFS.usedBytes() <= 4096) {
+    if (tm_this->fs_enabled and LITTLEFS.totalBytes()-LITTLEFS.usedBytes() <= 8192) {
       tm_this->fs_enabled = false;
       tm_this->err_fs_dataloss = true;
       sprintf (buffer, "Disabling further write access to FS because it is full");
       publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
-      return (0);
     }
-    else {
-      return ((LITTLEFS.totalBytes()-LITTLEFS.usedBytes())/1024);
-    }
+    return ((LITTLEFS.totalBytes()-LITTLEFS.usedBytes())/1024);
   }
   else { 
     return (0);
@@ -470,16 +450,16 @@ bool fs_load_routing (const char* filename) {
 }
 
 String set_routing (char* routing_table, const char* routing_string) {
-  uint16_t PID;
+  uint16_t PID = 0;
   String return_string;
   for (uint8_t i = 0; i < strlen (routing_string); i++) {
   	if (routing_string[i] == '0') {
   	  *routing_table++ = false;
-  	  return_string += String(PID++) + ":0 ";
+  	  return_string += String(pidName[PID++]) + ":0 ";
   	}
   	else if (routing_string[i] == '1') {
   	  *routing_table++ = true;
-  	  return_string += String(PID++) + ":1 ";
+  	  return_string += String(pidName[PID++]) + ":1 ";
   	}
   }
   return (return_string);
@@ -878,6 +858,8 @@ void publish_packet (ccsds_t* ccsds_ptr) {
   static uint16_t PID;
 
   PID = update_packet (ccsds_ptr);
+  sprintf (buffer, "DEBUG: Publish CCSDS packet PID %u / ctr %u with size %u", PID, get_ccsds_packet_ctr(ccsds_ptr), get_ccsds_packet_len(ccsds_ptr));
+  Serial.println (buffer);
   // save CCSDS packet to FS (which will also act as a buffer for replay)
   fs_buffer.fs_saved = false;
   if (routing_fs[PID] and tm_this->fs_enabled) {
@@ -961,16 +943,11 @@ bool open_fs_ccsds () {
 }
 
 bool publish_fs (ccsds_t* ccsds_ptr) {
-  Serial.println ("DEBUG: publish_fs");
   if (open_fs_ccsds ()) {
-    fs_buffer.fs_offset = fs_ccsds.position();
     fs_buffer.packet_len = get_ccsds_packet_len(ccsds_ptr);
     fs_ccsds.write ((const uint8_t*)ccsds_ptr, fs_buffer.packet_len);
-    //else if (ccsds_len % 2) {
-      // uneven packet length, add one \0 to reach even packet length on file
-    //  fs_ccsds.write ('\0');
-    //}
-    sprintf (buffer, "DEBUG: Wrote CCSDS packet with size %u at offset %u", fs_buffer.packet_len, fs_buffer.fs_offset);
+    fs_buffer.fs_offset = fs_ccsds.position() - fs_buffer.packet_len;
+    sprintf (buffer, "DEBUG: Wrote to FS CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), fs_buffer.packet_len, fs_buffer.fs_offset);
     Serial.println (buffer);
     tm_this->fs_active = true;
     tm_this->fs_rate++;
@@ -980,7 +957,8 @@ bool publish_fs (ccsds_t* ccsds_ptr) {
 }
 
 bool publish_serial (ccsds_t* ccsds_ptr) {
-  static uint16_t PID = get_ccsds_apid (ccsds_ptr) - 42;
+  static uint16_t PID;
+  PID = get_ccsds_apid (ccsds_ptr) - 42;
  /* static LinkedList<fs_buffer_idx_t*> serial_buffer;
   static uint16_t payload_ctr = get_ccsds_ctr (ccsds_ptr); 
   static uint16_t ccsds_len = get_ccsds_packet_len (ccsds_ptr);
@@ -1039,7 +1017,7 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
     else { */
       // write the latest message (real-time)
       switch ((uint8_t)config_this->serial_format) {
-        case ENC_JSON:  build_json_str ((char*)&buffer, get_ccsds_apid(ccsds_ptr)-42, ccsds_ptr);
+        case ENC_JSON:  build_json_str ((char*)&buffer, PID, ccsds_ptr);
                         Serial.println (String("[") + get_ccsds_millis (ccsds_ptr) + "] " + pidName[PID] + " " + buffer);
                         break;
         case ENC_CCSDS: Serial.write ((const uint8_t*)ccsds_ptr, get_ccsds_packet_len(ccsds_ptr));
@@ -1057,8 +1035,6 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
 }
   
 bool publish_yamcs (ccsds_t* ccsds_ptr) { 
-    Serial.println ("DEBUG: publish_yamcs");
-
   static LinkedList<buffer_t*> yamcs_buffer;
   static buffer_t* yamcs_buffer_entry;
 
@@ -1066,6 +1042,8 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
     // we can publish now
     if (yamcs_buffer.size() == 0) {
       // publish real-time
+      sprintf (buffer, "DEBUG: Publish to Yamcs realtime CCSDS packet PID %u / ctr %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
+      Serial.println (buffer);
       wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
       wifiUDP.write ((const uint8_t*)ccsds_ptr, get_ccsds_packet_len (ccsds_ptr));
       wifiUDP.endPacket();
@@ -1080,17 +1058,21 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
         yamcs_buffer_entry->packet_len = fs_buffer.packet_len;
         yamcs_buffer_entry->fs_offset = fs_buffer.fs_offset;
         yamcs_buffer.add(yamcs_buffer_entry);
+        sprintf (buffer, "DEBUG: Add to Yamcs queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), fs_buffer.packet_len, fs_buffer.fs_offset);
+        Serial.println (buffer);
         tm_this->yamcs_buffer++;
         // then replay buffer
         uint8_t replay_count = 0;
         while (yamcs_buffer.size() and replay_count++ < BUFFER_RELEASE_BATCH_SIZE) {
           yamcs_buffer_entry = yamcs_buffer.remove(0);
           fs_ccsds.seek(yamcs_buffer_entry->fs_offset);         
-          fs_ccsds.read((uint8_t*)ccsds_ptr, yamcs_buffer_entry->packet_len);
-          if (valid_ccsds_hdr (ccsds_ptr, PKT_TM)) {
+          fs_ccsds.read((uint8_t*)&replay_buffer, yamcs_buffer_entry->packet_len);
+          if (valid_ccsds_hdr (&replay_buffer, PKT_TM)) {
             // good packet recovered from buffer, publish
+            sprintf (buffer, "DEBUG: Publish to Yamcs stored CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(&replay_buffer)-42, get_ccsds_packet_ctr(&replay_buffer), yamcs_buffer_entry->packet_len, yamcs_buffer_entry->fs_offset);
+            Serial.println (buffer);
             wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
-            wifiUDP.write ((const uint8_t*)ccsds_ptr, yamcs_buffer_entry->packet_len);
+            wifiUDP.write ((const uint8_t*)&replay_buffer, yamcs_buffer_entry->packet_len);
             wifiUDP.endPacket();
             tm_this->yamcs_rate++;          
           }
@@ -1122,11 +1104,15 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
       yamcs_buffer_entry->packet_len = fs_buffer.packet_len;
       yamcs_buffer_entry->fs_offset = fs_buffer.fs_offset;
       yamcs_buffer.add(yamcs_buffer_entry);
+      sprintf (buffer, "DEBUG: Add to Yamcs queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), yamcs_buffer_entry->packet_len, yamcs_buffer_entry->fs_offset);
+      Serial.println (buffer);
       tm_this->yamcs_buffer++;
       return true;
     }
     else {
       // packet not stored on fs for buffer: dataloss!
+      sprintf (buffer, "DEBUG: CCSDS packet PID %u / ctr %u cannot be queued since not stored on FS", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
+      Serial.println (buffer);
       tm_this->err_yamcs_dataloss = true;
       //sprintf (buffer, "Cannot retrieve buffer packet with PID %u because it is not stored on fs", get_ccsds_apid(ccsds_ptr)-42); // TODO: ensure that this message is only sent once
       //publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
