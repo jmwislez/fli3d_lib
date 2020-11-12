@@ -858,8 +858,6 @@ void publish_packet (ccsds_t* ccsds_ptr) {
   static uint16_t PID;
 
   PID = update_packet (ccsds_ptr);
-  sprintf (buffer, "DEBUG: Publish CCSDS packet PID %u / ctr %u with size %u", PID, get_ccsds_packet_ctr(ccsds_ptr), get_ccsds_packet_len(ccsds_ptr));
-  Serial.println (buffer);
   // save CCSDS packet to FS (which will also act as a buffer for replay)
   fs_buffer.fs_saved = false;
   if (routing_fs[PID] and tm_this->fs_enabled) {
@@ -947,8 +945,6 @@ bool publish_fs (ccsds_t* ccsds_ptr) {
     fs_buffer.packet_len = get_ccsds_packet_len(ccsds_ptr);
     fs_ccsds.write ((const uint8_t*)ccsds_ptr, fs_buffer.packet_len);
     fs_buffer.fs_offset = fs_ccsds.position() - fs_buffer.packet_len;
-    sprintf (buffer, "DEBUG: Wrote to FS CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), fs_buffer.packet_len, fs_buffer.fs_offset);
-    Serial.println (buffer);
     tm_this->fs_active = true;
     tm_this->fs_rate++;
     fs_buffer.fs_saved = true;
@@ -964,8 +960,6 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
     // we can publish now
     if (serial_out_buffer.size() == 0) {
       // publish real-time
-      sprintf (buffer, "DEBUG: Publish to Serial realtime CCSDS packet PID %u / ctr %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
-      Serial.println (buffer);
       switch ((uint8_t)config_this->serial_format) {
         case ENC_JSON:  build_json_str ((char*)&buffer, get_ccsds_apid(ccsds_ptr)-42, ccsds_ptr);
                         Serial.println (String("[") + get_ccsds_millis (ccsds_ptr) + "] " + pidName[get_ccsds_apid(ccsds_ptr)-42] + " " + buffer);
@@ -985,8 +979,6 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
         serial_out_buffer_entry->packet_len = fs_buffer.packet_len;
         serial_out_buffer_entry->fs_offset = fs_buffer.fs_offset;
         serial_out_buffer.add(serial_out_buffer_entry);
-        sprintf (buffer, "DEBUG: Add to Serial queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), fs_buffer.packet_len, fs_buffer.fs_offset);
-        Serial.println (buffer);
         tm_this->serial_out_buffer++;
         // then replay buffer
         uint8_t replay_count = 0;
@@ -996,9 +988,6 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
           fs_ccsds.read((uint8_t*)&replay_buffer, serial_out_buffer_entry->packet_len);
           if (valid_ccsds_hdr (&replay_buffer, PKT_TM)) {
             // good packet recovered from buffer, publish
-            sprintf (buffer, "DEBUG: Publish to Serial stored CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(&replay_buffer)-42, get_ccsds_packet_ctr(&replay_buffer), serial_out_buffer_entry->packet_len, serial_out_buffer_entry->fs_offset);
-            Serial.println (buffer);
-            
             switch ((uint8_t)config_this->serial_format) {
               case ENC_JSON:  build_json_str ((char*)&buffer, get_ccsds_apid(&replay_buffer)-42, &replay_buffer);
                               Serial.println (String("[") + get_ccsds_millis (&replay_buffer) + "] " + pidName[get_ccsds_apid(&replay_buffer)-42] + " " + buffer);
@@ -1037,15 +1026,11 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
       serial_out_buffer_entry->packet_len = fs_buffer.packet_len;
       serial_out_buffer_entry->fs_offset = fs_buffer.fs_offset;
       serial_out_buffer.add(serial_out_buffer_entry);
-      sprintf (buffer, "DEBUG: Add to Serial queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), serial_out_buffer_entry->packet_len, serial_out_buffer_entry->fs_offset);
-      Serial.println (buffer);
       tm_this->serial_out_buffer++;
       return true;
     }
     else {
       // packet not stored on fs for buffer: dataloss!
-      sprintf (buffer, "DEBUG: CCSDS packet PID %u / ctr %u cannot be queued since not stored on FS", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
-      Serial.println (buffer);
       tm_this->err_serial_dataloss = true;
       //sprintf (buffer, "Cannot retrieve buffer packet with PID %u because it is not stored on fs", get_ccsds_apid(ccsds_ptr)-42); // TODO: ensure that this message is only sent once
       //publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
@@ -1062,8 +1047,6 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
     // we can publish now
     if (yamcs_buffer.size() == 0) {
       // publish real-time
-      sprintf (buffer, "DEBUG: Publish to Yamcs realtime CCSDS packet PID %u / ctr %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
-      Serial.println (buffer);
       wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
       wifiUDP.write ((const uint8_t*)ccsds_ptr, get_ccsds_packet_len (ccsds_ptr));
       wifiUDP.endPacket();
@@ -1078,8 +1061,6 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
         yamcs_buffer_entry->packet_len = fs_buffer.packet_len;
         yamcs_buffer_entry->fs_offset = fs_buffer.fs_offset;
         yamcs_buffer.add(yamcs_buffer_entry);
-        sprintf (buffer, "DEBUG: Add to Yamcs queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), fs_buffer.packet_len, fs_buffer.fs_offset);
-        Serial.println (buffer);
         tm_this->yamcs_buffer++;
         // then replay buffer
         uint8_t replay_count = 0;
@@ -1089,8 +1070,6 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
           fs_ccsds.read((uint8_t*)&replay_buffer, yamcs_buffer_entry->packet_len);
           if (valid_ccsds_hdr (&replay_buffer, PKT_TM)) {
             // good packet recovered from buffer, publish
-            sprintf (buffer, "DEBUG: Publish to Yamcs stored CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(&replay_buffer)-42, get_ccsds_packet_ctr(&replay_buffer), yamcs_buffer_entry->packet_len, yamcs_buffer_entry->fs_offset);
-            Serial.println (buffer);
             wifiUDP.beginPacket(config_network.yamcs_server, config_network.yamcs_tm_port);
             wifiUDP.write ((const uint8_t*)&replay_buffer, yamcs_buffer_entry->packet_len);
             wifiUDP.endPacket();
@@ -1124,15 +1103,11 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
       yamcs_buffer_entry->packet_len = fs_buffer.packet_len;
       yamcs_buffer_entry->fs_offset = fs_buffer.fs_offset;
       yamcs_buffer.add(yamcs_buffer_entry);
-      sprintf (buffer, "DEBUG: Add to Yamcs queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), yamcs_buffer_entry->packet_len, yamcs_buffer_entry->fs_offset);
-      Serial.println (buffer);
       tm_this->yamcs_buffer++;
       return true;
     }
     else {
       // packet not stored on fs for buffer: dataloss!
-      sprintf (buffer, "DEBUG: CCSDS packet PID %u / ctr %u cannot be queued since not stored on FS", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
-      Serial.println (buffer);
       tm_this->err_yamcs_dataloss = true;
       //sprintf (buffer, "Cannot retrieve buffer packet with PID %u because it is not stored on fs", get_ccsds_apid(ccsds_ptr)-42); // TODO: ensure that this message is only sent once
       //publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
