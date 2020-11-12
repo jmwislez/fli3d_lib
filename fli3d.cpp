@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-12 (fs-optimisation branch)
+ * version: 2020-11-12
  */
 
 #ifndef PLATFORM_ESP8266_RADIO
@@ -83,7 +83,8 @@ config_esp32cam_t  *config_this = &config_esp32cam;
 const char pidName[NUMBER_OF_PID][13] =   { "sts_esp32", "sts_esp32cam", "tm_esp32", "tm_esp32cam", "tm_camera", "tm_gps", "tm_motion", "tm_pressure", "tm_radio", "tm_timer", "tc_esp32", "tc_esp32cam" };
 const char eventName[8][9] =              { "init", "info", "warning", "error", "cmd", "cmd_ack", "cmd_resp", "cmd_fail" };
 const char subsystemName[13][14] =        { "esp32", "esp32cam", "ov2640", "neo6mv2", "mpu6050", "bmp280", "radio", "sd", "separation", "timer", "fli3d", "ground", "any" };
-const char modeName[7][10] =              { "init", "checkout", "ready", "thrust", "freefall", "parachute", "static" };
+const char modeName[4][10] =              { "init", "checkout", "nominal", "done" };
+const char stateName[4][10] =             { "static", "thrust", "freefall", "parachute" };
 const char cameraModeName[4][7] =         { "init", "idle", "single", "stream" };
 const char cameraResolutionName[11][10] = { "160x120", "invalid1", "invalid2", "240x176", "320x240", "400x300", "640x480", "800x600", "1024x768", "1280x1024", "1600x1200" };
 const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
@@ -329,9 +330,9 @@ void load_default_config () {
 bool fs_load_settings () {
   char linebuffer[80];
   uint8_t value_start;
-  File file = LITTLEFS.open ("/current.cfg");
+  File file = LITTLEFS.open ("/settings.ini");
   if (!file) {
-    publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "Failed to open configuration file '/current.cfg' from FS");
+    publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "Failed to open configuration file '/settings.ini' from FS");
     return false;
   }
   uint8_t i = 0; 
@@ -835,6 +836,7 @@ bool wifi_check () {
   else {
     if (!tm_this->wifi_connected) {
       tm_this->wifi_connected = true;
+      tm_this->warn_wifi_connloss = false;
     }
     return true;
   }
@@ -1364,11 +1366,11 @@ void reset_packet (ccsds_t* ccsds_ptr) {
                          esp32.serial_out_rate = 0;    
                          esp32.serial_in_rate = 0;  
                          esp32.fs_rate = 0;
-                         esp32.warn_serial_connloss = false;
-                         esp32.warn_wifi_connloss = false;
-                         esp32.err_serial_dataloss = false;
-                         esp32.err_yamcs_dataloss = false;    
-                         esp32.err_fs_dataloss = false;    
+                         //esp32.warn_serial_connloss = false;
+                         //esp32.warn_wifi_connloss = false;
+                         //esp32.err_serial_dataloss = false;
+                         //esp32.err_yamcs_dataloss = false;    
+                         //esp32.err_fs_dataloss = false;    
                          esp32.radio_active = false;
                          esp32.pressure_active = false;
                          esp32.motion_active = false;
@@ -1423,12 +1425,12 @@ void reset_packet (ccsds_t* ccsds_ptr) {
                          esp32cam.sd_ccsds_rate = 0;
                          esp32cam.sd_image_rate = 0;
                          esp32cam.camera_image_rate = 0;
-                         esp32cam.warn_serial_connloss = false;
-                         esp32cam.warn_wifi_connloss = false;
-                         esp32cam.err_serial_dataloss = false;
-                         esp32cam.err_yamcs_dataloss = false;    
-                         esp32cam.err_fs_dataloss = false;    
-                         esp32cam.err_sd_dataloss = false;    
+                         //esp32cam.warn_serial_connloss = false;
+                         //esp32cam.warn_wifi_connloss = false;
+                         //esp32cam.err_serial_dataloss = false;
+                         //esp32cam.err_yamcs_dataloss = false;    
+                         //esp32cam.err_fs_dataloss = false;    
+                         //esp32cam.err_sd_dataloss = false;    
                          esp32cam.camera_active = false;
                          esp32cam.fs_active = false;
                          esp32cam.sd_active = false;
@@ -1683,13 +1685,13 @@ void build_json_str (char* json_buffer, uint16_t PID, ccsds_t* ccsds_ptr) { // T
                          break;
     case TM_PRESSURE:    {
                            tm_pressure_t* bmp280_ptr = (tm_pressure_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f,\"valid\":%u}", 
+                           sprintf (json_buffer, "{\"ctr\":%u,\"p\":%u,\"p0\":%u,\"T\":%d,\"h\":%d,\"v_v\":%d,\"valid\":%u}", 
                                     bmp280_ptr->packet_ctr, bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->height, bmp280_ptr->velocity_v, bmp280_ptr->height_valid);
                          }
                          break;
     case TM_RADIO:       {
                            tm_radio_t* radio_ptr = (tm_radio_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"data\":\"%s\"}", radio_ptr->packet_ctr, get_hex_str ((char*)&radio, sizeof(tm_radio_t)));
+                           sprintf (json_buffer, "{\"ctr\":%u,\"data\":\"%s\"}", radio_ptr->packet_ctr, get_hex_str((char*)&radio, sizeof(tm_radio_t)).c_str());
                          }
                          break;
     case TM_TIMER:       {
@@ -2295,7 +2297,7 @@ bool cmd_reboot (uint8_t subsystem) {
 }
 
 bool cmd_set_opsmode (uint8_t opsmode) {
-  if (opsmode == MODE_CHECKOUT or opsmode == MODE_READY or opsmode == MODE_STATIC) {
+  if (opsmode == MODE_CHECKOUT or opsmode == MODE_NOMINAL or opsmode == MODE_DONE) {
       sprintf (buffer, "Setting opsmode for ESP32 subsystem to '%s'", modeName[opsmode]);
       publish_event (STS_ESP32, SS_ESP32, EVENT_CMD_RESP, buffer);
       esp32.opsmode = opsmode;
@@ -2355,6 +2357,10 @@ String get_hex_str (char* blob, uint16_t length) {
 
 void hex_to_bin (byte* destination, char* hex_input) {
   // TODO: TBW
+}
+
+int8_t sign (int16_t x) {
+    return (x > 0) - (x < 0);
 }
 
 #endif

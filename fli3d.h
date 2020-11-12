@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-12 (fs-optimisation branch)
+ * version: 2020-11-12
  */
  
 #ifndef _FLI3D_H_
@@ -121,12 +121,16 @@ extern const char subsystemName[13][14];
 // opsmode
 #define MODE_INIT              0
 #define MODE_CHECKOUT          1
-#define MODE_READY             2
-#define MODE_THRUST            3
-#define MODE_FREEFALL          4
-#define MODE_PARACHUTE         5
-#define MODE_STATIC            6
-extern const char modeName[7][10];
+#define MODE_NOMINAL           2
+#define MODE_DONE              3
+extern const char modeName[4][10];
+
+// state
+#define STATE_STATIC           0
+#define STATE_THRUST           1
+#define STATE_FREEFALL         2
+#define STATE_PARACHUTE        3
+extern const char stateName[4][10];
 
 // cammode
 #define CAM_INIT               0
@@ -232,8 +236,9 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
-  uint8_t     opsmode:4;               // 4
-  uint8_t     free:4;                  //  0 - free to assign
+  uint8_t     opsmode:2;               // 6
+  uint8_t     state:2;                 //  4
+  uint8_t     free:4;                  //   0 - free to assign
   uint8_t     error_ctr;
   uint8_t     warning_ctr;
   uint8_t     tc_exec_ctr;
@@ -454,11 +459,12 @@ struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
-  uint8_t     opsmode:4;               // 4
-  bool        pressure_active:1;       //  3
-  bool        motion_active:1;         //   2
-  bool        gps_active:1;            //    1
-  bool        camera_active:1;         //     0
+  uint8_t     opsmode:2;               // 6
+  uint8_t     state:2;                 //  4
+  bool        pressure_active:1;       //   3
+  bool        motion_active:1;         //    2
+  bool        gps_active:1;            //     1
+  bool        camera_active:1;         //      0
   uint8_t     error_ctr;
   uint8_t     warning_ctr;
   uint8_t     pressure_height;         // m               (0 - 255 m)
@@ -739,6 +745,7 @@ extern bool cmd_toggle_routing (uint16_t PID, const char interface);
 extern uint8_t id_of (const char* string, uint8_t string_len, const char* array_of_strings, uint16_t array_len);
 extern String get_hex_str (char* blob, uint16_t length);
 extern void hex_to_bin (byte* destination, char* hex_input);
+extern int8_t sign (int16_t x);
 
 #endif // PLATFORM_ESP32 or PLATFORM_ESP32CAM
 
