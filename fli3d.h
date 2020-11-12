@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-08 (fs-optimisation branch)
+ * version: 2020-11-12 (fs-optimisation branch)
  */
  
 #ifndef _FLI3D_H_
@@ -249,7 +249,7 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   uint8_t     serial_out_rate;
   uint8_t     fs_rate;
   uint16_t    yamcs_buffer;
-  uint16_t    serial_buffer;
+  uint16_t    serial_out_buffer;
   uint16_t    mem_free;
   uint16_t    fs_free;
   bool        radio_enabled:1;         // 7
@@ -304,7 +304,7 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   uint8_t     sd_image_rate;
   uint8_t     camera_image_rate;
   uint8_t     yamcs_buffer;
-  uint8_t     serial_buffer;
+  uint8_t     serial_out_buffer;
   uint16_t    mem_free;
   uint16_t    fs_free;
   uint16_t    sd_free;

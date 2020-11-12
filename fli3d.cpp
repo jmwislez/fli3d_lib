@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-08 (fs-optimisation branch)
+ * version: 2020-11-12 (fs-optimisation branch)
  */
 
 #ifndef PLATFORM_ESP8266_RADIO
@@ -25,7 +25,7 @@ NTPClient timeClient(wifiUDP_NTP, config_network.ntp_server, 0);
 File fs_ccsds;
 
 char buffer[JSON_MAX_SIZE];
-char serial_buffer[JSON_MAX_SIZE];
+char serial_in_buffer[JSON_MAX_SIZE];
 char path_buffer[32];
 char today_dir[16];
 buffer_t fs_buffer;
@@ -956,84 +956,104 @@ bool publish_fs (ccsds_t* ccsds_ptr) {
   }
 }
 
-bool publish_serial (ccsds_t* ccsds_ptr) {
-  static uint16_t PID;
-  PID = get_ccsds_apid (ccsds_ptr) - 42;
- /* static LinkedList<fs_buffer_idx_t*> serial_buffer;
-  static uint16_t payload_ctr = get_ccsds_ctr (ccsds_ptr); 
-  static uint16_t ccsds_len = get_ccsds_packet_len (ccsds_ptr);
+bool publish_serial (ccsds_t* ccsds_ptr) { 
+  static LinkedList<buffer_t*> serial_out_buffer;
+  static buffer_t* serial_out_buffer_entry;
+
   if (tm_this->serial_connected) {
-    if (payload_ctr > var_this->serial_last_packet[PID] + 1 and tm_this->fs_enabled and routing_fs[PID]) {
-      // replay batch of unsent messages (non-realtime)
-      sprintf (path_buffer, "%s/PID_%u.raw", var_this->today_dir, PID);
-      File fs_ccsds = LITTLEFS.open(path_buffer, FILE_READ);
-      if (!fs_ccsds) {
-        tm_this->serial_buffer = 0;
-        var_this->serial_last_packet[PID] = -1;
-        tm_this->err_serial_dataloss = true;
-        sprintf (buffer, "Failed to open '%s' on FS for serial replay; disabling replay for PID %u", path_buffer, PID);
-        publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
-        return false;
-      }
-      else {
-        tm_this->serial_buffer++; // account for the triggering packet that was added to the queue
-        if (PID == STS_ESP32 or PID == STS_ESP32CAM or PID == TC_ESP32 or PID == TC_ESP32CAM) {
-          ccsds_len = JSON_MAX_SIZE + (JSON_MAX_SIZE%2) + 6 + sizeof(ccsds_hdr_t);
-        }
-        else if (ccsds_len % 2) {
-          ccsds_len++;
-        }
-        uint8_t batch_count = 0;
-        tm_this->fs_active = true;
-        fs_ccsds.seek(ccsds_len * var_this->serial_last_packet[PID]);
-        while (payload_ctr > var_this->serial_last_packet[PID] and batch_count++ < BUFFER_RELEASE_BATCH_SIZE) {
-          fs_ccsds.read((uint8_t*)ccsds_ptr, (size_t)ccsds_len);
-          if (get_ccsds_packet_ctr(ccsds_ptr) == ++var_this->serial_last_packet[PID]) {
-            switch ((uint8_t)config_this->serial_format) {
-              case ENC_JSON:  build_json_str ((char*)&buffer, PID, ccsds_ptr);
-                              Serial.println (String("[") + get_ccsds_millis (ccsds_ptr) + "] " + pidName[PID] + " " + buffer);
-                              break;
-              case ENC_CCSDS: Serial.write ((const uint8_t*)ccsds_ptr, get_ccsds_packet_len (ccsds_ptr) + sizeof(ccsds_hdr_t));
-                              Serial.println ();
-                              break;
-            }    
-            tm_this->serial_out_rate++;
-            tm_this->serial_buffer--;
-          }
-          else {
-            tm_this->serial_buffer = 0;
-            uint16_t expected_packet = var_this->serial_last_packet[PID];
-            var_this->serial_last_packet[PID] = -1;
-            fs_ccsds.close();
-          	sprintf (buffer, "Stopped replay after getting packet %u instead of %u when replaying %s from FS for serial replay", get_ccsds_packet_ctr(ccsds_ptr), expected_packet, pidName[PID]);
-            publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
-            return false;
-          }
-        }
-        fs_ccsds.close();
-        return true;
-      }
-    }
-    else { */
-      // write the latest message (real-time)
+    // we can publish now
+    if (serial_out_buffer.size() == 0) {
+      // publish real-time
+      sprintf (buffer, "DEBUG: Publish to Serial realtime CCSDS packet PID %u / ctr %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
+      Serial.println (buffer);
       switch ((uint8_t)config_this->serial_format) {
-        case ENC_JSON:  build_json_str ((char*)&buffer, PID, ccsds_ptr);
-                        Serial.println (String("[") + get_ccsds_millis (ccsds_ptr) + "] " + pidName[PID] + " " + buffer);
+        case ENC_JSON:  build_json_str ((char*)&buffer, get_ccsds_apid(ccsds_ptr)-42, ccsds_ptr);
+                        Serial.println (String("[") + get_ccsds_millis (ccsds_ptr) + "] " + pidName[get_ccsds_apid(ccsds_ptr)-42] + " " + buffer);
                         break;
         case ENC_CCSDS: Serial.write ((const uint8_t*)ccsds_ptr, get_ccsds_packet_len(ccsds_ptr));
                         Serial.println ();
                         break;
       }
       tm_this->serial_out_rate++;
-      return true;
- /*   }
+      return true; 
+    }
+    else {
+      // there's a buffer to empty first
+      if (open_fs_ccsds ()) {
+        // first safely add the new packet to the buffer
+        serial_out_buffer_entry = (buffer_t*)malloc(sizeof(buffer_t));
+        serial_out_buffer_entry->packet_len = fs_buffer.packet_len;
+        serial_out_buffer_entry->fs_offset = fs_buffer.fs_offset;
+        serial_out_buffer.add(serial_out_buffer_entry);
+        sprintf (buffer, "DEBUG: Add to Serial queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), fs_buffer.packet_len, fs_buffer.fs_offset);
+        Serial.println (buffer);
+        tm_this->serial_out_buffer++;
+        // then replay buffer
+        uint8_t replay_count = 0;
+        while (serial_out_buffer.size() and replay_count++ < BUFFER_RELEASE_BATCH_SIZE) {
+          serial_out_buffer_entry = serial_out_buffer.remove(0);
+          fs_ccsds.seek(serial_out_buffer_entry->fs_offset);         
+          fs_ccsds.read((uint8_t*)&replay_buffer, serial_out_buffer_entry->packet_len);
+          if (valid_ccsds_hdr (&replay_buffer, PKT_TM)) {
+            // good packet recovered from buffer, publish
+            sprintf (buffer, "DEBUG: Publish to Serial stored CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(&replay_buffer)-42, get_ccsds_packet_ctr(&replay_buffer), serial_out_buffer_entry->packet_len, serial_out_buffer_entry->fs_offset);
+            Serial.println (buffer);
+            
+            switch ((uint8_t)config_this->serial_format) {
+              case ENC_JSON:  build_json_str ((char*)&buffer, get_ccsds_apid(&replay_buffer)-42, &replay_buffer);
+                              Serial.println (String("[") + get_ccsds_millis (&replay_buffer) + "] " + pidName[get_ccsds_apid(&replay_buffer)-42] + " " + buffer);
+                              break;
+              case ENC_CCSDS: Serial.write ((const uint8_t*)&replay_buffer, get_ccsds_packet_len(&replay_buffer));
+                              Serial.println ();
+                              break;
+            }            
+            tm_this->serial_out_rate++;          
+          }
+          else {
+            // archive corruption
+            tm_this->err_serial_dataloss = true;            
+            sprintf (buffer, "Got invalid CCSDS packet when reading packet from fs");
+            publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);             
+          }
+          tm_this->serial_out_buffer--;
+          free (serial_out_buffer_entry);
+        }         
+        tm_this->fs_active = true;
+        return true;
+      }
+      else {
+        // cannot open buffer file: dataloss!
+        tm_this->serial_out_buffer = 0; // TODO: release LL and pointer memory
+        tm_this->err_serial_dataloss = true;
+        return false;
+      }
+    } 
   }
   else {
-    tm_this->serial_buffer++;
-    return false;
-  }  */
+    // no serial, we cannot publish now
+    if (fs_buffer.fs_saved) {
+      // packet was stored on fs so we can add it to buffer index
+      serial_out_buffer_entry = (buffer_t*)malloc(sizeof(buffer_t));
+      serial_out_buffer_entry->packet_len = fs_buffer.packet_len;
+      serial_out_buffer_entry->fs_offset = fs_buffer.fs_offset;
+      serial_out_buffer.add(serial_out_buffer_entry);
+      sprintf (buffer, "DEBUG: Add to Serial queue CCSDS packet PID %u / ctr %u with size %u at offset %u", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr), serial_out_buffer_entry->packet_len, serial_out_buffer_entry->fs_offset);
+      Serial.println (buffer);
+      tm_this->serial_out_buffer++;
+      return true;
+    }
+    else {
+      // packet not stored on fs for buffer: dataloss!
+      sprintf (buffer, "DEBUG: CCSDS packet PID %u / ctr %u cannot be queued since not stored on FS", get_ccsds_apid(ccsds_ptr)-42, get_ccsds_packet_ctr(ccsds_ptr));
+      Serial.println (buffer);
+      tm_this->err_serial_dataloss = true;
+      //sprintf (buffer, "Cannot retrieve buffer packet with PID %u because it is not stored on fs", get_ccsds_apid(ccsds_ptr)-42); // TODO: ensure that this message is only sent once
+      //publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
+      return false;
+    }
+  } 
 }
-  
+
 bool publish_yamcs (ccsds_t* ccsds_ptr) { 
   static LinkedList<buffer_t*> yamcs_buffer;
   static buffer_t* yamcs_buffer_entry;
@@ -1150,7 +1170,7 @@ bool publish_udp_text (const char* message) {
 }
 
 #ifdef PLATFORM_ESP32CAM
-bool publish_sd_ccsds (ccsds_t* ccsds_ptr) {
+bool publish_sd_ccsds (ccsds_t* ccsds_ptr) { // TODO: rewrite
   sprintf (path_buffer, "%s/PID_%u.raw", today_dir, PID);
   File sd_ccsds = SD_MMC.open(path_buffer, FILE_APPEND);
   if (!sd_ccsds) {
@@ -1181,7 +1201,7 @@ bool publish_sd_ccsds (ccsds_t* ccsds_ptr) {
   }
 }
 
-bool publish_sd_json (ccsds_t* ccsds_ptr) {
+bool publish_sd_json (ccsds_t* ccsds_ptr) { // TODO: rewrite
   sprintf (path_buffer, "%s/json.raw", today_dir);
   File sd_json = SD_MMC.open(path_buffer, FILE_APPEND);
   if (!sd_json) {
@@ -1616,7 +1636,7 @@ void build_json_str (char* json_buffer, uint16_t PID, ccsds_t* ccsds_ptr) { // T
                                     esp32_ptr->packet_ctr, modeName[esp32_ptr->opsmode], esp32_ptr->error_ctr, esp32_ptr->warning_ctr, 
                                     esp32_ptr->tc_exec_ctr, esp32_ptr->tc_fail_ctr,
                                     esp32_ptr->mem_free, esp32_ptr->fs_free, 
-                                    esp32_ptr->yamcs_buffer, esp32_ptr->serial_buffer, 
+                                    esp32_ptr->yamcs_buffer, esp32_ptr->serial_out_buffer, 
                                     esp32_ptr->radio_rate, esp32_ptr->pressure_rate, esp32_ptr->motion_rate, esp32_ptr->gps_rate, esp32_ptr->camera_rate, esp32_ptr->udp_rate, esp32_ptr->yamcs_rate, esp32_ptr->serial_in_rate, esp32_ptr->serial_out_rate, esp32_ptr->fs_rate, 
                                     esp32_ptr->separation_sts,
                                     esp32_ptr->radio_enabled, esp32_ptr->pressure_enabled, esp32_ptr->motion_enabled, esp32_ptr->gps_enabled, esp32_ptr->camera_enabled, esp32_ptr->wifi_enabled, esp32_ptr->wifi_udp_enabled, esp32_ptr->wifi_yamcs_enabled, esp32_ptr->fs_enabled, esp32_ptr->fs_ftp_enabled, esp32_ptr->time_set,
@@ -1630,7 +1650,7 @@ void build_json_str (char* json_buffer, uint16_t PID, ccsds_t* ccsds_ptr) { // T
                                     esp32cam_ptr->packet_ctr, esp32cam_ptr->error_ctr, esp32cam_ptr->warning_ctr, 
                                     esp32cam_ptr->tc_exec_ctr, esp32cam_ptr->tc_fail_ctr,
                                     esp32cam_ptr->mem_free, esp32cam_ptr->fs_free, esp32cam_ptr->sd_free, 
-                                    esp32cam_ptr->yamcs_buffer, esp32cam_ptr->serial_buffer, 
+                                    esp32cam_ptr->yamcs_buffer, esp32cam_ptr->serial_out_buffer, 
                                     esp32cam_ptr->camera_image_rate, esp32cam_ptr->udp_rate, esp32cam_ptr->yamcs_rate, esp32cam_ptr->serial_in_rate, esp32cam_ptr->serial_out_rate, esp32cam_ptr->fs_rate, esp32cam_ptr->sd_json_rate, esp32cam_ptr->sd_ccsds_rate, esp32cam_ptr->sd_image_rate,  
                                     esp32cam_ptr->camera_enabled, esp32cam_ptr->wifi_enabled, esp32cam_ptr->wifi_udp_enabled, esp32cam_ptr->wifi_yamcs_enabled, esp32cam_ptr->wifi_image_enabled, esp32cam_ptr->fs_enabled, esp32cam_ptr->fs_ftp_enabled, esp32cam_ptr->time_set, esp32cam_ptr->sd_enabled, esp32cam_ptr->sd_image_enabled, esp32cam_ptr->sd_json_enabled, esp32cam_ptr->sd_ccsds_enabled,
                                     esp32cam_ptr->camera_active, esp32cam_ptr->fs_active, esp32cam_ptr->sd_active, esp32cam_ptr->ftp_active, esp32cam_ptr->ota_enabled,
@@ -1777,7 +1797,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32cam.sd_ccsds_rate = obj["rate"][7];
                         esp32cam.sd_image_rate = obj["rate"][8];
                         esp32cam.yamcs_buffer = obj["buf"][0];
-                        esp32cam.serial_buffer = obj["buf"][1];
+                        esp32cam.serial_out_buffer = obj["buf"][1];
                         esp32cam.mem_free = obj["mem"][0];
                         esp32cam.fs_free = obj["mem"][1];
                         esp32cam.sd_free = obj["mem"][2];
@@ -1905,7 +1925,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         esp32cam.serial_out_rate = obj["comm_rate"][4];
                         esp32cam.fs_rate = obj["comm_rate"][5];
                         esp32.yamcs_buffer = obj["buf"][0];
-                        esp32.serial_buffer = obj["buf"][1];
+                        esp32.serial_out_buffer = obj["buf"][1];
                         esp32.mem_free = obj["mem"][0];
                         esp32.fs_free = obj["mem"][1];
                         esp32.separation_sts = obj["sep"];
@@ -2121,15 +2141,15 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
 // SERIAL FUNCTIONALITY
 
 uint16_t serial_check () {
-  // gets data from Serial, put it in serial_buffer, and return length of string that is ready for processing or false if string is not complete
+  // gets data from Serial, put it in serial_in_buffer, and return length of string that is ready for processing or false if string is not complete
   static uint8_t serial_status;
   static uint16_t data_len;
   static uint8_t pkt_apid;
-  static uint16_t serial_buffer_pos;
+  static uint16_t serial_in_buffer_pos;
   while(Serial.available()) {
     var_timer.last_serial_in_millis = millis();
     char c = Serial.read();
-    serial_buffer[serial_buffer_pos++] = c;
+    serial_in_buffer[serial_in_buffer_pos++] = c;
     if (serial_status == SERIAL_COMPLETE) {
       // new transmission started: find out what we're getting ...
       switch (c) {
@@ -2155,19 +2175,19 @@ uint16_t serial_check () {
       }
     }
     if (serial_status == SERIAL_CCSDS) {
-      if (serial_buffer_pos == 5) { // CCSDS header should be in, we can check whether it's valid
-        if (valid_ccsds_hdr ((ccsds_t*)&serial_buffer, PKT_TM) or valid_ccsds_hdr ((ccsds_t*)&serial_buffer, PKT_TC)) {
-          data_len = get_ccsds_packet_len ((ccsds_t*)&serial_buffer);
+      if (serial_in_buffer_pos == 5) { // CCSDS header should be in, we can check whether it's valid
+        if (valid_ccsds_hdr ((ccsds_t*)&serial_in_buffer, PKT_TM) or valid_ccsds_hdr ((ccsds_t*)&serial_in_buffer, PKT_TC)) {
+          data_len = get_ccsds_packet_len ((ccsds_t*)&serial_in_buffer);
         }
         else {
-          sprintf (buffer, "Received packet over serial with invalid CCSDS header (%s...)", get_hex_str ((char*)serial_buffer, 6).c_str());
+          sprintf (buffer, "Received packet over serial with invalid CCSDS header (%s...)", get_hex_str ((char*)serial_in_buffer, 6).c_str());
           publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
-          serial_buffer_pos = 0;
+          serial_in_buffer_pos = 0;
           serial_status = SERIAL_UNKNOWN;
           return false;
         }
       }
-      if (serial_buffer_pos == data_len) { // CCSDS packet is complete               
+      if (serial_in_buffer_pos == data_len) { // CCSDS packet is complete               
         Serial.println ("DEBUG: CCSDS packet complete");
         if (!tm_this->serial_connected) { 
           tm_this->serial_connected = true;
@@ -2175,7 +2195,7 @@ uint16_t serial_check () {
         }
         tm_this->serial_in_rate++;
         serial_status = SERIAL_COMPLETE;
-        serial_buffer_pos = 0;
+        serial_in_buffer_pos = 0;
         return (data_len);              
       }
     }
@@ -2183,7 +2203,7 @@ uint16_t serial_check () {
       switch (c) {
         case 0x0A:  // received carriage return, EOL reached
                     if (serial_status == SERIAL_KEEPALIVE) {
-                      switch (serial_buffer[0]) {
+                      switch (serial_in_buffer[0]) {
                         case 'O': // keep-alive confirming good connection by counterpart
                                   if (!tm_this->serial_connected) {
                                     tm_this->serial_connected = true;
@@ -2199,71 +2219,71 @@ uint16_t serial_check () {
                       }
                       Serial.println ("DEBUG: KEEPALIVE transmission completed");
                       serial_status = SERIAL_COMPLETE;
-                      serial_buffer_pos = 0;
+                      serial_in_buffer_pos = 0;
                       return false;
                     }
                     else { // ASCII/JSON transmission complete
-                      serial_buffer[serial_buffer_pos-1] = 0x00;
+                      serial_in_buffer[serial_in_buffer_pos-1] = 0x00;
                       if (!tm_this->serial_connected) { 
                         tm_this->serial_connected = true;
                         tm_this->warn_serial_connloss = false; 
                       }
                       tm_this->serial_in_rate++;
-                      Serial.print (String("DEBUG: ASCII/JSON transmission completed: [") + strlen(serial_buffer) + "] " + serial_buffer);
+                      Serial.print (String("DEBUG: ASCII/JSON transmission completed: [") + strlen(serial_in_buffer) + "] " + serial_in_buffer);
                       serial_status = SERIAL_COMPLETE;
-                      serial_buffer_pos = 0;
-                      return (strlen(serial_buffer));
+                      serial_in_buffer_pos = 0;
+                      return (strlen(serial_in_buffer));
                     }
                     break;
         case 0x0D:  if (serial_status == SERIAL_COMPLETE) {    
                       // received line feed after carriage return, all smooth, ignore
-                      serial_buffer_pos = 0;
+                      serial_in_buffer_pos = 0;
                     }
                     else {
                       // received line feed but not after carriage return, don't know what this is ...
-                      serial_buffer_pos = 0;
+                      serial_in_buffer_pos = 0;
                       serial_status = SERIAL_UNKNOWN;
                       sprintf (buffer, "Received CR without LF from %s", subsystemName[SS_OTHER]);
                       publish_event (STS_THIS, SS_OTHER, EVENT_WARNING, buffer);                    
                     }
                     break;
         default:    // happily build up ASCII-encoded string
-                    if (serial_buffer_pos > 1 and serial_status == SERIAL_KEEPALIVE) {
+                    if (serial_in_buffer_pos > 1 and serial_status == SERIAL_KEEPALIVE) {
                       // we're getting characters after 'o' or 'O', this is a normal ASCII transmission
                       serial_status = SERIAL_ASCII;
                     }
                     break;  
       }
     }
-    if (serial_buffer_pos == JSON_MAX_SIZE) { // something is wrong: line too long
-      serial_buffer[JSON_MAX_SIZE-1] = '\0';
-      serial_buffer_pos = 0;
-      Serial.println (get_hex_str ((char*)&serial_buffer, JSON_MAX_SIZE));
+    if (serial_in_buffer_pos == JSON_MAX_SIZE) { // something is wrong: line too long
+      serial_in_buffer[JSON_MAX_SIZE-1] = '\0';
+      serial_in_buffer_pos = 0;
+      Serial.println (get_hex_str ((char*)&serial_in_buffer, JSON_MAX_SIZE));
       if (!config_this->debug_over_serial) {
         tm_this->serial_connected = false;
       }
       sprintf (buffer, "Received too long message from %s", subsystemName[SS_OTHER]);
       publish_event (STS_THIS, SS_OTHER, EVENT_ERROR, buffer);
-      Serial.println (String("DEBUG: too long message on Serial: ") + serial_buffer);
+      Serial.println (String("DEBUG: too long message on Serial: ") + serial_in_buffer);
       serial_status = SERIAL_UNKNOWN;
-      return false; // invalid serial_buffer content, do not use
+      return false; // invalid serial_in_buffer content, do not use
     }
   } // while Serial.available
   return false; // no serial data ready
 }
 
 void serial_parse () {
-  if (serial_buffer[0] == '[') {
+  if (serial_in_buffer[0] == '[') {
     // JSON formatted message
-    parse_json ((char*)&serial_buffer);
+    parse_json ((char*)&serial_in_buffer);
   }
-  else if (serial_buffer[0] == 0x00 or serial_buffer[0] == 0x01) {
+  else if (serial_in_buffer[0] == 0x00 or serial_in_buffer[0] == 0x01) {
     // CCSDS formatted message
-    parse_ccsds ((ccsds_t*)&serial_buffer);
+    parse_ccsds ((ccsds_t*)&serial_in_buffer);
   }
   else {
     // generic ASCII string: likely debug information
-    publish_udp_text (serial_buffer);
+    publish_udp_text (serial_in_buffer);
   }
 }
 
