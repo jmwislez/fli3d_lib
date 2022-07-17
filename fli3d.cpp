@@ -182,7 +182,7 @@ bool ftp_check () {
 
 void fs_create_today_dir () {
   char sequencer = 'A';
-  fs_sync ();
+  sync_fs_ccsds ();
   while (LITTLEFS.exists(today_dir)) {
     sprintf (today_dir, "/%s%s%s%c", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer++);
   }
@@ -216,16 +216,6 @@ uint16_t sd_free () {
   return ((SD_MMC.totalBytes() - SD_MMC.usedBytes())/1024);
 }
 #endif
-
-bool fs_sync () {
-  static uint32_t start_millis;
-  if (fs_ccsds) {
-    start_millis = millis();
-  	fs_ccsds.close();
-  	tm_this->fs_active = true;
-    timer.publish_fs_duration += millis() - start_millis;
-  }
-}
 
 // CONFIGURATION FUNCTIONALITY
 
@@ -926,8 +916,8 @@ void publish_event (uint16_t PID, uint8_t subsystem, uint8_t event_type, const c
   }
 }
 
-
 bool open_fs_ccsds () {
+  static uint32_t start_millis;
   if (!fs_ccsds) {
     sprintf (path_buffer, "%s/ccsds.raw", today_dir);
   	fs_ccsds = LITTLEFS.open(path_buffer, "a+");
@@ -940,6 +930,16 @@ bool open_fs_ccsds () {
   	}
   }
   return true;
+}
+
+bool sync_fs_ccsds () {
+  static uint32_t start_millis;
+  if (fs_ccsds) {
+    start_millis = millis();
+  	fs_ccsds.close();
+  	tm_this->fs_active = true;
+    timer.publish_fs_duration += millis() - start_millis;
+  }
 }
 
 bool publish_fs (ccsds_t* ccsds_ptr) {
@@ -2309,22 +2309,40 @@ bool cmd_set_opsmode (uint8_t opsmode) {
 }
 
 bool cmd_set_parameter (const char* parameter, const char* value) {
-  if (set_parameter (parameter, value)) {
-    publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-    return true;
+  if (esp32.opsmode == MODE_CHECKOUT) {
+    if (set_parameter (parameter, value)) {
+      publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
+      return true;
+    }
+    else {
+      publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command needs valid parameter/value");
+      return false; 
+    }
   }
   else {
-    publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command needs valid parameter/value");
-    return false; 
+    publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command only allowed in CHECKOUT mode");
+    return false;   
   }
 }
 
 bool cmd_load_config (const char* filename) {
-  fs_load_config (filename);
+  if (esp32.opsmode == MODE_CHECKOUT) {
+    fs_load_config (filename);
+  }
+  else {
+    publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command only allowed in CHECKOUT mode");
+    return false;   
+  }  
 }
 
 bool cmd_load_routing (const char* filename) {
-  fs_load_routing (filename);
+  if (esp32.opsmode == MODE_CHECKOUT) {
+    fs_load_routing (filename);
+  }
+  else {
+    publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command only allowed in CHECKOUT mode");
+    return false;   
+  }   
 }
 
 bool cmd_toggle_routing (uint16_t PID, const char interface) {

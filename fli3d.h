@@ -676,7 +676,6 @@ extern uint16_t fs_free ();
 #ifdef PLATFORM_ESP32CAM
 extern uint16_t sd_free ();
 #endif
-extern bool fs_sync ();
 
 // CONFIGURATION FUNCTIONALITY
 extern void load_default_config ();
@@ -711,6 +710,7 @@ extern bool yamcs_tc_check ();
 #endif
 extern uint16_t update_packet (ccsds_t* ccsds_ptr);
 extern void reset_packet (ccsds_t* ccsds_ptr);
+extern bool sync_fs_ccsds ();
 
 // CCSDS FUNCTIONALITY
 extern void ccsds_init ();
