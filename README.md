@@ -66,6 +66,6 @@ The following other libraries need to be installed:
 
 Create ```secrets.h``` based on ```secrets.h.example```.
 
-```Use fli3d_lib```
+## Use fli3d_lib
 
-This library is needed to compile [https://github.com/jmwislez/fli3d_ESP32.git fli3d_ESP32] and [https://github.com/jmwislez/fli3d_ESP32cam.git fli3d_ESP32cam].
+This library is needed to compile https://github.com/jmwislez/fli3d_ESP32.git and https://github.com/jmwislez/fli3d_ESP32cam.git.
