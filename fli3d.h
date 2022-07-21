@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2020-11-12
+ * version: 2022-07-21
  */
  
 #ifndef _FLI3D_H_
@@ -34,7 +34,8 @@
 #define JSON_MAX_SIZE             512
 #define WIFI_TIMEOUT              120    // s
 #define NTP_TIMEOUT               60     // s
-#define WIFI_POLL                 5      // s
+#define WIFI_CHECK                1      // s
+#define NTP_CHECK                 10     // s
 #define RADIO_BAUD                2000   // transmission speed over 433 MHz radio
 #define KEEPALIVE_INTERVAL        200    // ms for keep-alive of serial connection between ESP32 and ESP32cam
 #define BUFFER_RELEASE_BATCH_SIZE 3      // TM buffer is released by this number of packets at a time
@@ -85,11 +86,12 @@
 #define TM_MOTION              6
 #define TM_PRESSURE            7
 #define TM_RADIO               8
-#define TM_TIMER               9
-#define TC_ESP32               10
-#define TC_ESP32CAM            11
-#define NUMBER_OF_PID          12
-extern const char pidName[NUMBER_OF_PID][13];
+#define TIMER_ESP32            9
+#define TIMER_ESP32CAM         10
+#define TC_ESP32               11
+#define TC_ESP32CAM            12
+#define NUMBER_OF_PID          13
+extern const char pidName[NUMBER_OF_PID][15];
 
 // event_types
 #define EVENT_INIT             0
@@ -497,7 +499,7 @@ struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
   bool        esp32cam_err_sd_dataloss:1;      //        0
 }; 
 
-struct __attribute__ ((packed)) tm_timer_t { // APID: 51 (33)
+struct __attribute__ ((packed)) timer_esp32_t { // APID: 51 (33)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
@@ -518,14 +520,32 @@ struct __attribute__ ((packed)) tm_timer_t { // APID: 51 (33)
   uint16_t    publish_udp_duration;
 };
 
-struct __attribute__ ((packed)) tc_esp32_t { // APID: 52 (34)
+struct __attribute__ ((packed)) timer_esp32cam_t { // APID: 52 (34)  // TODO: fine-tune packet
+  ccsds_hdr_t ccsds_hdr;
+  uint32_t    millis:24;
+  uint16_t    packet_ctr;
+  uint16_t    camera_duration;
+  uint16_t    serial_duration;
+  uint16_t    tc_duration;
+  uint16_t    sd_duration;
+  uint16_t    ftp_duration;
+  uint16_t    wifi_duration;
+  uint16_t    idle_duration;
+  uint16_t    publish_sd_duration;
+  uint16_t    publish_fs_duration;
+  uint16_t    publish_serial_duration;
+  uint16_t    publish_yamcs_duration;
+  uint16_t    publish_udp_duration;
+};
+
+struct __attribute__ ((packed)) tc_esp32_t { // APID: 53 (35)
   ccsds_hdr_t ccsds_hdr;
   uint8_t     cmd_id;
   uint8_t     int_parameter;
   char        str_parameter[JSON_MAX_SIZE];
 }; 
 
-struct __attribute__ ((packed)) tc_esp32cam_t { // APID: 53 (35)
+struct __attribute__ ((packed)) tc_esp32cam_t { // APID: 54 (36)
   ccsds_hdr_t ccsds_hdr;
   uint8_t     cmd_id;
   uint8_t     int_parameter;
@@ -554,7 +574,7 @@ struct __attribute__ ((packed)) config_esp32_t {
   uint8_t     gps_rate;                 // Hz (valid: 1,5,10,16)
   char        config_file[20];
   char        routing_file[20];
-  int16_t     mpu6050_accel_sensitivity; // µm/s2 per LSB 
+  int16_t     mpu6050_accel_sensitivity; // ï¿½m/s2 per LSB 
   int16_t     mpu6050_accel_offset_x;    // y_sensor values
   int16_t     mpu6050_accel_offset_y;    // z_sensor values
   int16_t     mpu6050_accel_offset_z;    // x_sensor values
@@ -628,41 +648,46 @@ struct __attribute__ ((packed)) buffer_t {
 };
 
 
-extern sts_esp32_t        sts_esp32;
-extern sts_esp32cam_t     sts_esp32cam;
-extern tm_esp32_t         esp32;
-extern tm_esp32cam_t      esp32cam;
-extern tm_camera_t        ov2640;
-extern tm_gps_t           neo6mv2;
-extern tm_motion_t        mpu6050;
-extern tm_pressure_t      bmp280;
-extern tm_radio_t         radio;
-extern tm_timer_t         timer;
-extern tc_esp32_t         tc_esp32;
-extern tc_esp32cam_t      tc_esp32cam;
+extern sts_esp32_t         sts_esp32;
+extern sts_esp32cam_t      sts_esp32cam;
+extern tm_esp32_t          esp32;
+extern tm_esp32cam_t       esp32cam;
+extern tm_camera_t         ov2640;
+extern tm_gps_t            neo6mv2;
+extern tm_motion_t         mpu6050;
+extern tm_pressure_t       bmp280;
+extern tm_radio_t          radio;
+extern timer_esp32_t       timer_esp32;
+extern timer_esp32cam_t    timer_esp32cam;
+extern tc_esp32_t          tc_esp32;
+extern tc_esp32cam_t       tc_esp32cam;
 
-extern var_timer_t        var_timer;
-extern config_network_t   config_network;
-extern config_esp32_t     config_esp32;
-extern config_esp32cam_t  config_esp32cam;
+extern var_timer_t         var_timer;
+extern config_network_t    config_network;
+extern config_esp32_t      config_esp32;
+extern config_esp32cam_t   config_esp32cam;
 
 #ifdef PLATFORM_ESP32
-extern tm_esp32_t*        tm_this;
-extern tm_esp32cam_t*     tm_other;
-extern sts_esp32_t*       sts_this;
-extern sts_esp32cam_t*    sts_other;
-extern tc_esp32_t*        tc_this;
-extern tc_esp32cam_t*     tc_other;
-extern config_esp32_t*    config_this;
+extern tm_esp32_t*         tm_this;
+extern tm_esp32cam_t*      tm_other;
+extern sts_esp32_t*        sts_this;
+extern sts_esp32cam_t*     sts_other;
+extern tc_esp32_t*         tc_this;
+extern tc_esp32cam_t*      tc_other;
+extern timer_esp32_t*      timer_this;
+extern timer_esp32cam_t*   timer_other;
+extern config_esp32_t*     config_this;
 #endif
 #ifdef PLATFORM_ESP32CAM
-extern tm_esp32cam_t*     tm_this;
-extern tm_esp32_t*        tm_other;
-extern sts_esp32cam_t*    sts_this;
-extern sts_esp32_t*       sts_other;
-extern tc_esp32cam_t*     tc_this;
-extern tc_esp32_t*        tc_other;
-extern config_esp32cam_t* config_this;
+extern tm_esp32cam_t*      tm_this;
+extern tm_esp32_t*         tm_other;
+extern sts_esp32cam_t*     sts_this;
+extern sts_esp32_t*        sts_other;
+extern tc_esp32cam_t*      tc_this;
+extern tc_esp32_t*         tc_other;
+extern timer_esp32cam_t*   timer_this;
+extern timer_esp32_t*      timer_other;
+extern config_esp32cam_t*  config_this;
 #endif
 
 extern char buffer[JSON_MAX_SIZE];
@@ -674,7 +699,7 @@ extern bool ftp_setup ();
 extern bool ftp_check ();
 extern uint16_t fs_free ();
 #ifdef PLATFORM_ESP32CAM
-extern uint16_t sd_free ();
+extern uint16_t sd_free (); // TODO: have this only in ESP32cam code?
 #endif
 
 // CONFIGURATION FUNCTIONALITY
