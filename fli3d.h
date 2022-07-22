@@ -220,8 +220,8 @@ struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
-  uint8_t     type:4;                  // 4
-  uint8_t     subsystem:4;             //  0
+  uint8_t     type:4;                  // 4-7
+  uint8_t     subsystem:4;             //  0-3
   char        message[JSON_MAX_SIZE];
 };
 
@@ -229,8 +229,8 @@ struct __attribute__ ((packed)) sts_esp32cam_t { // APID: 43 (2b)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
-  uint8_t     type:4;                  // 4
-  uint8_t     subsystem:4;             //  0
+  uint8_t     type:4;                  // 4-7
+  uint8_t     subsystem:4;             //  0-3
   char        message[JSON_MAX_SIZE];
 }; 
 
@@ -238,9 +238,9 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
-  uint8_t     opsmode:2;               // 6
-  uint8_t     state:2;                 //  4
-  uint8_t     free:4;                  //   0 - free to assign
+  uint8_t     opsmode:2;               // 6-7
+  uint8_t     state:2;                 //  4-5
+  uint8_t     free:4;                  //   0-3 - free to assign
   uint8_t     error_ctr;
   uint8_t     warning_ctr;
   uint8_t     tc_exec_ctr;
@@ -269,12 +269,12 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool        wifi_yamcs_enabled:1;    //        0
   bool        fs_enabled:1;            // 7
   bool        fs_ftp_enabled:1;        //  6
-  bool        time_set:1;              //   5
+  bool        ota_enabled:1;           //   5 
   bool        free_24:1;               //    4 - free to assign
   bool        free_23:1;               //     3 - free to assign
   bool        free_22:1;               //      2 - free to assign
   bool        free_21:1;               //       1 - free to assign
-  bool        free_20:1;               //        0 - free to assign
+  bool        time_set:1;              //        0
   bool        serial_connected:1;      // 7
   bool        wifi_connected:1;        //  6 
   bool        warn_serial_connloss:1;  //   5        
@@ -290,17 +290,20 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool        camera_active:1;         //     3
   bool        fs_active:1;             //      2
   bool        ftp_active:1;            //       1
-  bool        ota_enabled:1;           //        0 
+  bool        free_40:1;               //        0 - free to assign
 };
 
 struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
+  uint8_t     camera_mode:4;           // 4-7
+  uint8_t     free:4;                  //  0-3 - free to assign
   uint8_t     error_ctr;
   uint8_t     warning_ctr;
   uint8_t     tc_exec_ctr;
   uint8_t     tc_fail_ctr;
+  uint8_t     camera_rate;
   uint8_t     udp_rate;
   uint8_t     yamcs_rate;
   uint8_t     serial_in_rate;
@@ -309,28 +312,27 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   uint8_t     sd_json_rate;
   uint8_t     sd_ccsds_rate;
   uint8_t     sd_image_rate;
-  uint8_t     camera_image_rate;
   uint8_t     yamcs_buffer;
   uint8_t     serial_out_buffer;
   uint16_t    mem_free;
   uint16_t    fs_free;
   uint16_t    sd_free;
-  bool        wifi_enabled:1;          // 7
-  bool        wifi_udp_enabled:1;      //  6
-  bool        wifi_yamcs_enabled:1;    //   5
-  bool        wifi_image_enabled:1;    //    4
-  bool        camera_enabled:1;        //     3   
-  bool        time_set:1;              //      2
+  bool        camera_enabled:1;        // 7   
+  bool        wifi_enabled:1;          //  6
+  bool        wifi_udp_enabled:1;      //   5
+  bool        wifi_yamcs_enabled:1;    //    4
+  bool        wifi_image_enabled:1;    //     3
+  bool        free_12:1;               //      2 - free to assign
   bool        free_11:1;               //       1 - free to assign
-  bool        free_10:1;               //        0 - free to assign
+  bool        time_set:1;              //        0
   bool        fs_enabled:1;            // 7 
-  bool        fs_ftp_enabled:1;        //  6      
-  bool        sd_enabled:1;            //   5 
-  bool        sd_image_enabled:1;      //    4
-  bool        sd_json_enabled:1;       //     3
-  bool        sd_ccsds_enabled:1;      //      2 
-  bool        free_21:1;               //       1 - free to assign
-  bool        free_20:1;               //        0 - free to assign  
+  bool        sd_enabled:1;            //  6 
+  bool        fs_ftp_enabled:1;        //   5      
+  bool        sd_ftp_enabled:1;        //    4
+  bool        sd_image_enabled:1;      //     3
+  bool        sd_json_enabled:1;       //      2
+  bool        sd_ccsds_enabled:1;      //       1 
+  bool        free_20:1;               //        0 - free to assign
   bool        serial_connected:1;      // 7
   bool        wifi_connected:1;        //  6 
   bool        warn_serial_connloss:1;  //   5        
@@ -342,9 +344,9 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool        camera_active:1;         // 7
   bool        fs_active:1;             //  6
   bool        sd_active:1;             //   5
-  bool        ftp_active:1;            //    4
-  bool        ota_enabled:1;           //     3
-  bool        free_42:1;               //      2 - free to assign 
+  bool        fs_ftp_active:1;         //    4
+  bool        sd_ftp_active:1;         //     3
+  bool        free_42:1;               //      2 - free to assign  
   bool        free_41:1;               //       1 - free to assign 
   bool        free_40:1;               //        0 - free to assign 
 };
@@ -353,8 +355,8 @@ struct __attribute__ ((packed)) tm_camera_t { // APID: 46 (2e)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
-  uint8_t     camera_mode:4;           // 4
-  uint8_t     resolution:4;            //  0
+  uint8_t     camera_mode:4;           // 4-7
+  uint8_t     resolution:4;            //  0-3
   uint32_t    filesize:24; 
   uint8_t     wifi_ms; 
   uint8_t     sd_ms;
@@ -374,8 +376,8 @@ struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
   ccsds_hdr_t ccsds_hdr;
   uint32_t    millis:24;
   uint16_t    packet_ctr;
-  uint8_t     status:4;                // 4
-  uint8_t     satellites:4;            //  0     *GGA
+  uint8_t     status:4;                // 4-7
+  uint8_t     satellites:4;            //  0-3   *GGA
   uint8_t     hours;                   //        RMC,*GGA,ZDA
   uint8_t     minutes;                 //        RMC,*GGA,ZDA
   uint8_t     seconds;                 //        RMC,*GGA,ZDA
@@ -407,13 +409,13 @@ struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
   bool        pdop_valid:1;            //       1
   bool        error_valid:1;           //        0
   bool        offset_valid:1;          // 7
-  bool        free_16:1;
-  bool        free_15:1;
-  bool        free_14:1;
-  bool        free_13:1;
-  bool        free_12:1;
-  bool        free_11:1;
-  bool        free_10:1;
+  bool        free_16:1;               //  6 - free to assign
+  bool        free_15:1;               //   5 - free to assign
+  bool        free_14:1;               //    4 - free to assign
+  bool        free_13:1;               //     3 - free to assign
+  bool        free_12:1;               //      2 - free to assign
+  bool        free_11:1;               //       1 - free to assign
+  bool        free_10:1;               //        0 - free to assign
 };
 
 struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
@@ -434,8 +436,8 @@ struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
   uint8_t     gyro_range:2;            //   4-5
   bool        accel_valid:1;           //    3
   bool        gyro_valid:1;            //     2
-  bool        free_01:1;               //      1
-  bool        free_00:1;               //       0
+  bool        free_01:1;               //      1 - free to assign
+  bool        free_00:1;               //       0 - free to assign
 }; 
 
 struct __attribute__ ((packed)) tm_pressure_t { // APID: 49 (31)
@@ -448,13 +450,13 @@ struct __attribute__ ((packed)) tm_pressure_t { // APID: 49 (31)
   int16_t     velocity_v;              // cm/s
   int16_t     temperature;             // cdegC
   bool        height_valid:1;          // 7
-  bool        free_06:1;               //  6
-  bool        free_05:1;               //   5
-  bool        free_04:1;               //    4
-  bool        free_03:1;               //     3
-  bool        free_02:1;               //      2
-  bool        free_01:1;               //       1
-  bool        free_00:1;               //        0
+  bool        free_06:1;               //  6 - free to assign
+  bool        free_05:1;               //   5 - free to assign
+  bool        free_04:1;               //    4 - free to assign
+  bool        free_03:1;               //     3 - free to assign
+  bool        free_02:1;               //      2 - free to assign
+  bool        free_01:1;               //       1 - free to assign
+  bool        free_00:1;               //        0 - free to assign
 }; 
 
 struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
