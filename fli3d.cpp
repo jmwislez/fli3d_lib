@@ -28,8 +28,8 @@ ccsds_t replayed_ccsds;
 
 char buffer[JSON_MAX_SIZE];
 char serial_in_buffer[JSON_MAX_SIZE];
-char path_buffer[32];
-char today_tag[16];
+char ccsds_path_buffer[32] = "/nodate.ccsds";
+char json_path_buffer[32] = "/nodate.json";
 
 #ifdef PLATFORM_ESP32
 extern void ota_setup ();
@@ -148,6 +148,7 @@ bool fs_flush_data () {
     File dir = LITTLEFS.open ("/");
     File file = dir.openNextFile ();
     char local_path_buffer[32];
+    char path_buffer[32];
     while (file) {
       if (file.isDirectory()) {
         sprintf (path_buffer, "%s", file.name());
@@ -172,40 +173,50 @@ bool fs_flush_data () {
   }
 }
 
-bool ftp_setup () {
-  wifiTCP_FTP.begin(config_network.ftp_user, config_network.ftp_password);
-  tm_this->ftp_fs = config_this->ftp_fs;
-  sprintf (buffer, "Starting passive FTP server on TCP port %s:%u", WiFi.localIP().toString().c_str(), 21);
-  publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
-  return true;
-}
-
-bool ftp_check (uint8_t filesystem) {
-  switch (filesystem) {
-  case FS_LITTLEFS: wifiTCP_FTP.handleFTP (LITTLEFS);  
-  	                break;
-  #ifdef PLATFORM_ESP32CAM
-  case FS_SD_MMC:   wifiTCP_FTP.handleFTP (SD_MMC);
-  	                break;
-  #endif
-  }
-  tm_this->ftp_fs = filesystem;
-  tm_this->ftp_active = true;
-}
-
-void fs_create_today_dir () {
-  char sequencer = 'A';
+void create_today_dir (uint8_t filesystem) {
+  char sequencer1 = 'A';
+  char sequencer2 = 'A';
+  char today_tag[16];
   timeClient.update();
   sync_file_ccsds ();
-  while (!strcmp(today_tag, ""), LITTLEFS.exists(String ("/") + today_tag)) {
-    sprintf (today_tag, "%s%s%s%c", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer++);
+  sync_file_json ();
+  #ifdef PLATFORM_ESP32  
+  while (!strcmp(today_tag, "") and filesystem == FS_LITTLEFS and LITTLEFS.exists(String ("/") + today_tag)) {
+  #endif
+  #ifdef PLATFORM_ESP32CAM  
+  while (!strcmp(today_tag, "") and ((filesystem == FS_LITTLEFS and LITTLEFS.exists(String ("/") + today_tag)) or (filesystem == FS_SD_MMC and SD_MMC.exists(String ("/") + today_tag)))) {
+  #endif
+    sprintf (today_tag, "%s%s%s%c%c", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer1, sequencer2++);
+    if (sequencer2 == '[') {
+      sequencer1++;
+      sequencer2 = 'A';
+    }
   }
-  LITTLEFS.mkdir(String ("/") + today_tag);
-  if (LITTLEFS.exists("/nodate.ccsds")) {
-    sprintf (path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
-    LITTLEFS.rename ("/nodate.ccsds", path_buffer);
-  }   
-  sprintf (buffer, "Created storage directory /%s on FS for current session, and moved current CCSDS log file to it", today_tag);
+  if (filesystem == FS_LITTLEFS) {
+    LITTLEFS.mkdir(String ("/") + today_tag);
+    if (LITTLEFS.exists("/nodate.ccsds")) {
+      sprintf (ccsds_path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
+      LITTLEFS.rename ("/nodate.ccsds", ccsds_path_buffer);
+    }  
+    if (LITTLEFS.exists("/nodate.json")) {
+      sprintf (json_path_buffer, "/%s/%s.json", today_tag, today_tag);
+      LITTLEFS.rename ("/nodate.json", json_path_buffer);
+    }
+  }
+  #ifdef PLATFORM_ESP32CAM 
+  else if (filesystem == FS_SD_MMC) {
+    SD_MMC.mkdir(String ("/") + today_tag);
+    if (SD_MMC.exists("/nodate.ccsds")) {
+      sprintf (ccsds_path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
+      SD_MMC.rename ("/nodate.ccsds", path_buffer);
+    }  
+    if (SD_MMC.exists("/nodate.json")) {
+      sprintf (json_path_buffer, "/%s/%s.json", today_tag, today_tag);
+      SD_MMC.rename ("/nodate.json", json_path_buffer);
+    }
+  }
+  #endif
+  sprintf (buffer, "Created storage directory /%s on %s for current session, and moved current log files to it", today_tag, fsName[filesystem]);
   publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
   tm_this->fs_active = true;
 }
@@ -241,27 +252,31 @@ bool sd_setup () {
   return true;
 }
 
-void sd_create_today_dir () {
-  char sequencer = 'A';
-  timeClient.update();
-  sync_file_ccsds ();
-  while (!strcmp(today_tag, ""), SD_MMC.exists(String ("/") + today_tag)) {
-    sprintf (today_tag, "%s%s%s%c", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer++);
-  }
-  SD_MMC.mkdir(String ("/") + today_tag);
-  if (SD_MMC.exists("/nodate.ccsds")) {
-    sprintf (path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
-    SD_MMC.rename ("/noname.ccsds", path_buffer);
-  }   
-  sprintf (buffer, "Created storage directory %s on SD for current session, and moved current CCSDS log file to it", today_tag);
-  publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
-  tm_this->sd_active = true;
-}
-
 uint16_t sd_free () {
   return ((SD_MMC.totalBytes() - SD_MMC.usedBytes())/1024/1024);
 }
 #endif
+
+bool ftp_setup () {
+  wifiTCP_FTP.begin(config_network.ftp_user, config_network.ftp_password);
+  tm_this->ftp_fs = config_this->ftp_fs;
+  sprintf (buffer, "Starting passive FTP server on TCP port %s:%u", WiFi.localIP().toString().c_str(), 21);
+  publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+  return true;
+}
+
+bool ftp_check (uint8_t filesystem) {
+  switch (filesystem) {
+  case FS_LITTLEFS: wifiTCP_FTP.handleFTP (LITTLEFS);  
+  	                break;
+  #ifdef PLATFORM_ESP32CAM
+  case FS_SD_MMC:   wifiTCP_FTP.handleFTP (SD_MMC);
+  	                break;
+  #endif
+  }
+  tm_this->ftp_fs = filesystem;
+  tm_this->ftp_active = true;
+}
 
 // CONFIGURATION FUNCTIONALITY
 
@@ -891,7 +906,7 @@ bool wifi_sta_setup () {
     tm_this->wifi_connected = true;
   } 
   i = 0;
-  while (i++ < NTP_TIMEOUT and !time_check()) {
+  while (i++ < NTP_TIMEOUT and !ntp_check()) {
     delay (1000);
   }
   if (i >= NTP_TIMEOUT) {
@@ -918,18 +933,18 @@ bool wifi_check () {
   }
 }
 
-bool time_check () {
-  if (!tm_this->time_set and timeClient.update()) {
+bool ntp_check () {
+  if (timeClient.update()) {
     sprintf (buffer, "Time on %s set via NTP server %s: %s", subsystemName[SS_THIS], config_network.ntp_server, timeClient.getFormattedDate().c_str());
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
     tm_this->time_set = true;
     #ifdef PLATFORM_ESP32CAM
     if (tm_this->sd_enabled) {
-      sd_create_today_dir (); 
+      create_today_dir (FS_SD_MMC); 
     }
     #endif
     if (tm_this->fs_enabled) {
-      fs_create_today_dir ();
+      create_today_dir (FS_LITTLEFS);
     }
     return true;
   }
@@ -1015,17 +1030,15 @@ bool open_file_ccsds (uint8_t filesystem) {
   static uint32_t start_millis;
   if (!file_ccsds) {
     switch (filesystem) {
-    case FS_LITTLEFS: sprintf (path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
-    	                file_ccsds = LITTLEFS.open(path_buffer, "a+");
+    case FS_LITTLEFS: file_ccsds = LITTLEFS.open(ccsds_path_buffer, "a+");
     	    	          break;
     #ifdef PLATFORM_ESP32CAM
-    case FS_SD_MMC:   sprintf (path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
-    	                file_ccsds = SD_MMC.open(path_buffer, "a+");
+    case FS_SD_MMC:   file_ccsds = SD_MMC.open(ccsds_path_buffer, "a+");
     	    	          break;
     #endif
     }
     if (!file_ccsds) {
-      sprintf (buffer, "Failed to open '%s' on %s in append/read mode", path_buffer, fsName[filesystem]);
+      sprintf (buffer, "Failed to open '%s' on %s in append/read mode", ccsds_path_buffer, fsName[filesystem]);
       publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
       switch (filesystem) {
       case FS_LITTLEFS: tm_this->err_fs_dataloss = true;
@@ -1049,17 +1062,15 @@ bool open_file_json (uint8_t filesystem) {
   static uint32_t start_millis;
   if (!file_json) {
     switch (filesystem) {
-    case FS_LITTLEFS: sprintf (path_buffer, "/%s/%s.json", today_tag);
-    	                file_json = LITTLEFS.open(path_buffer, "a+");
+    case FS_LITTLEFS: file_json = LITTLEFS.open(json_path_buffer, "a+");
     	                break;
     #ifdef PLATFORM_ESP32CAM
-    case FS_SD_MMC:   sprintf (path_buffer, "/%s/%s.json", today_tag);
-    	                file_json = SD_MMC.open(path_buffer, "a+");
+    case FS_SD_MMC:   file_json = SD_MMC.open(json_path_buffer, "a+");
     	    	          break;
     #endif
     }
     if (!file_json) {
-      sprintf (buffer, "Failed to open '%s' on %s in append/read mode", path_buffer, fsName[filesystem]);
+      sprintf (buffer, "Failed to open '%s' on %s in append/read mode", json_path_buffer, fsName[filesystem]);
       publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
       switch (filesystem) {
       case FS_LITTLEFS: tm_this->err_fs_dataloss = true;

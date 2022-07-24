@@ -32,10 +32,10 @@
 
 #define SerialBaud                115200
 #define JSON_MAX_SIZE             512
-#define WIFI_TIMEOUT              120    // s
-#define NTP_TIMEOUT               60     // s
-#define WIFI_CHECK                1      // s
-#define NTP_CHECK                 10     // s
+#define WIFI_TIMEOUT              120    // s (time-out when initializing)
+#define NTP_TIMEOUT               10     // s (time-out when initializing)
+#define WIFI_CHECK                1      // s (check interval to ensure connection, otherwise buffer)
+#define NTP_CHECK                 1      // s (check interval in background after time-out)
 #define RADIO_BAUD                2000   // transmission speed over 433 MHz radio
 #define KEEPALIVE_INTERVAL        200    // ms for keep-alive of serial connection between ESP32 and ESP32cam
 #define BUFFER_RELEASE_BATCH_SIZE 3      // TM buffer is released by this number of packets at a time
@@ -708,15 +708,14 @@ extern File file_ccsds, file_json;
 // FS FUNCTIONALITY
 extern bool fs_setup ();
 extern bool fs_flush_data ();
-extern bool ftp_setup ();
-extern bool ftp_check (uint8_t filesystem);
 extern uint16_t fs_free ();
-void fs_create_today_dir ();
+void create_today_dir ();
 #ifdef PLATFORM_ESP32CAM
 extern bool sd_setup ();
 extern uint16_t sd_free ();
-void sd_create_today_dir ();
 #endif
+extern bool ftp_setup ();
+extern bool ftp_check (uint8_t filesystem);
 
 // CONFIGURATION FUNCTIONALITY
 extern void load_default_config ();
@@ -731,7 +730,7 @@ extern bool wifi_setup ();
 extern bool wifi_ap_setup ();
 extern bool wifi_sta_setup ();
 extern bool wifi_check ();
-extern bool time_check ();
+extern bool ntp_check ();
 
 // TM/TC FUNCTIONALITY
 extern void publish_event (uint16_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message);
