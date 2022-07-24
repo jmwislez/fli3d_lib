@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-07-21
+ * version: 2022-07-24
  */
  
 #ifndef _FLI3D_H_
@@ -261,9 +261,9 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   uint8_t     yamcs_rate;
   uint8_t     serial_in_rate;
   uint8_t     serial_out_rate;
-  uint8_t     fs_rate;
-  uint16_t    yamcs_buffer;
-  uint16_t    serial_out_buffer;
+  uint8_t     fs_rate;                                                          
+  uint8_t    yamcs_buffer;
+  uint8_t    serial_out_buffer;
   uint16_t    mem_free;
   uint16_t    fs_free;
   bool        radio_enabled:1;         // 7
@@ -275,7 +275,7 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool        wifi_udp_enabled:1;      //       1
   bool        wifi_yamcs_enabled:1;    //        0
   bool        fs_enabled:1;            // 7
-  bool        ftp_enabled:1;        //  6
+  bool        ftp_enabled:1;           //  6
   bool        ota_enabled:1;           //   5 
   bool        free_24:1;               //    4 - free to assign
   bool        free_23:1;               //     3 - free to assign
@@ -297,7 +297,7 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool        camera_active:1;         //     3
   bool        fs_active:1;             //      2
   bool        ftp_active:1;            //       1
-  bool        buffer_active:1;         //        0  // TODO: populate
+  bool        buffer_active:1;         //        0
 };
 
 struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
@@ -355,7 +355,7 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool        fs_active:1;             //  6
   bool        sd_active:1;             //   5
   bool        ftp_active:1;            //    4
-  bool        buffer_active:1;         //     3   // TODO: populate!
+  bool        buffer_active:1;         //     3
   bool        free_42:1;               //      2 - free to assign  
   bool        free_41:1;               //       1 - free to assign 
   bool        free_40:1;               //        0 - free to assign 
