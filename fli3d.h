@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-07-24
+ * version: 2022-07-25
  */
  
 #ifndef _FLI3D_H_
@@ -29,15 +29,17 @@
 #include <ESPFtpServer.h>
 #include <FS.h>
 #include <LITTLEFS.h>
+#include <SerialTransfer.h>
 
-#define SerialBaud                115200
+#define SERIAL_BAUD               115200
+#define SERIAL_SIZE_RX            128
 #define JSON_MAX_SIZE             512
 #define WIFI_TIMEOUT              120    // s (time-out when initializing)
 #define NTP_TIMEOUT               10     // s (time-out when initializing)
 #define WIFI_CHECK                1      // s (check interval to ensure connection, otherwise buffer)
 #define NTP_CHECK                 1      // s (check interval in background after time-out)
 #define RADIO_BAUD                2000   // transmission speed over 433 MHz radio
-#define KEEPALIVE_INTERVAL        200    // ms for keep-alive of serial connection between ESP32 and ESP32cam
+#define KEEPALIVE_INTERVAL        200    // ms for loss of connection detection of serial connection between ESP32 and ESP32cam
 #define BUFFER_RELEASE_BATCH_SIZE 3      // TM buffer is released by this number of packets at a time
 #define MIN_MEM_FREE              70000  // TM buffering stops when memory is below this value 
 
@@ -767,7 +769,9 @@ extern void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr);
 extern bool parse_json (const char* json_string);
 
 // SERIAL FUNCTIONALITY
-extern uint16_t serial_check ();
+extern bool serial_setup ();
+extern void serial_keepalive ();
+extern bool serial_check ();
 extern void serial_parse ();
 
 // COMMANDS

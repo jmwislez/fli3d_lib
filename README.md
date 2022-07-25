@@ -2,6 +2,7 @@
 
 ## Install this library
 Install these files as a library in the Arduino IDE by going into ```Arduino\libraries```, and doing ```git clone https://github.com/jmwislez/fli3d_lib```.
+Note that ESP32 core 1.0.6 was used (2.0.4 gave compilation errors).
 
 ## Install other dependencies
 
@@ -10,6 +11,7 @@ The following other libraries need to be installed:
 - via Arduino IDE "Manage libraries...":
   - ArduinoJson
   - LittleFS_esp32
+  - SerialTransfer
 - via ```git clone``` in ```Arduino/libraries/```:
   - NTPClient (https://github.com/taranais/NTPClient)
     This version of NTPClient contains getFormattedDate

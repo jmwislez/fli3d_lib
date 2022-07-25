@@ -12,6 +12,7 @@
 #include "SPI.h"
 #endif
 
+SerialTransfer serialTransfer;
 WiFiUDP wifiUDP;
 WiFiUDP wifiUDP_NTP;
 #ifdef ASYNCUDP
@@ -30,6 +31,7 @@ char buffer[JSON_MAX_SIZE];
 char serial_in_buffer[JSON_MAX_SIZE];
 char ccsds_path_buffer[32] = "/nodate.ccsds";
 char json_path_buffer[32] = "/nodate.json";
+char today_dir[16] = "/";
 
 #ifdef PLATFORM_ESP32
 extern void ota_setup ();
@@ -107,7 +109,6 @@ char routing_sd_json[NUMBER_OF_PID];
 char routing_sd_ccsds[NUMBER_OF_PID];
 #endif
 
-
 // FS FUNCTIONALITY
 
 bool fs_setup () {
@@ -181,42 +182,43 @@ void create_today_dir (uint8_t filesystem) {
   sync_file_ccsds ();
   sync_file_json ();
   #ifdef PLATFORM_ESP32  
-  while (!strcmp(today_tag, "") and filesystem == FS_LITTLEFS and LITTLEFS.exists(String ("/") + today_tag)) {
+  while (!strcmp(today_dir, "/"), (filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir))) {
   #endif
   #ifdef PLATFORM_ESP32CAM  
-  while (!strcmp(today_tag, "") and ((filesystem == FS_LITTLEFS and LITTLEFS.exists(String ("/") + today_tag)) or (filesystem == FS_SD_MMC and SD_MMC.exists(String ("/") + today_tag)))) {
+  while (!strcmp(today_dir, "/"), ((filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir)) or (filesystem == FS_SD_MMC and SD_MMC.exists(today_dir)))) {
   #endif
     sprintf (today_tag, "%s%s%s%c%c", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer1, sequencer2++);
     if (sequencer2 == '[') {
       sequencer1++;
       sequencer2 = 'A';
     }
+    sprintf (today_dir, "/%s", today_tag);
   }
   if (filesystem == FS_LITTLEFS) {
-    LITTLEFS.mkdir(String ("/") + today_tag);
+    LITTLEFS.mkdir(today_dir);
     if (LITTLEFS.exists("/nodate.ccsds")) {
-      sprintf (ccsds_path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
+      sprintf (ccsds_path_buffer, "%s/%s.ccsds", today_dir, today_tag);
       LITTLEFS.rename ("/nodate.ccsds", ccsds_path_buffer);
     }  
     if (LITTLEFS.exists("/nodate.json")) {
-      sprintf (json_path_buffer, "/%s/%s.json", today_tag, today_tag);
+      sprintf (json_path_buffer, "%s/%s.json", today_dir, today_tag);
       LITTLEFS.rename ("/nodate.json", json_path_buffer);
     }
   }
   #ifdef PLATFORM_ESP32CAM 
   else if (filesystem == FS_SD_MMC) {
-    SD_MMC.mkdir(String ("/") + today_tag);
+    SD_MMC.mkdir(today_dir);
     if (SD_MMC.exists("/nodate.ccsds")) {
-      sprintf (ccsds_path_buffer, "/%s/%s.ccsds", today_tag, today_tag);
-      SD_MMC.rename ("/nodate.ccsds", path_buffer);
+      sprintf (ccsds_path_buffer, "%s/%s.ccsds", today_dir, today_tag);
+      SD_MMC.rename ("/nodate.ccsds", ccsds_path_buffer);
     }  
     if (SD_MMC.exists("/nodate.json")) {
-      sprintf (json_path_buffer, "/%s/%s.json", today_tag, today_tag);
+      sprintf (json_path_buffer, "%s/%s.json", today_dir, today_tag);
       SD_MMC.rename ("/nodate.json", json_path_buffer);
     }
   }
   #endif
-  sprintf (buffer, "Created storage directory /%s on %s for current session, and moved current log files to it", today_tag, fsName[filesystem]);
+  sprintf (buffer, "Created storage directory %s on %s for current session, and moved current log files to it", today_dir, fsName[filesystem]);
   publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
   tm_this->fs_active = true;
 }
@@ -906,13 +908,7 @@ bool wifi_sta_setup () {
     tm_this->wifi_connected = true;
   } 
   i = 0;
-  while (i++ < NTP_TIMEOUT and !ntp_check()) {
-    delay (1000);
-  }
-  if (i >= NTP_TIMEOUT) {
-    sprintf (buffer, "Tired of waiting for NTP time from %s, continuing in background", config_network.ntp_server);
-    publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
-  }
+  ntp_check();
   return tm_this->wifi_connected;
 }
 
@@ -1182,10 +1178,11 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
       // publish real-time
       switch ((uint8_t)config_this->serial_format) {
         case ENC_JSON:  build_json_str ((char*)&buffer, ccsds_ptr);
-                        Serial.println (String("[") + get_ccsds_millis (ccsds_ptr) + "] " + pidName[get_ccsds_apid(ccsds_ptr)-42] + " " + buffer);
+                        serialTransfer.txObj(buffer, 0);
+                        serialTransfer.sendData(strlen(buffer));
                         break;
-        case ENC_CCSDS: Serial.write ((const uint8_t*)ccsds_ptr, get_ccsds_packet_len(ccsds_ptr));
-                        Serial.println ();
+        case ENC_CCSDS: serialTransfer.txObj((const uint8_t*)ccsds_ptr, 0);
+                        serialTransfer.sendData(get_ccsds_packet_len(ccsds_ptr));
                         break;
       }
       tm_this->serial_out_rate++;
@@ -1209,10 +1206,11 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
             // good packet recovered from buffer, publish
             switch ((uint8_t)config_this->serial_format) {
               case ENC_JSON:  build_json_str ((char*)&buffer, &replayed_ccsds);
-                              Serial.println (String("[") + get_ccsds_millis (&replayed_ccsds) + "] " + pidName[get_ccsds_apid(&replayed_ccsds)-42] + " " + buffer);
+                              serialTransfer.txObj(buffer, 0);
+                              serialTransfer.sendData(strlen(buffer));
                               break;
-              case ENC_CCSDS: Serial.write ((const uint8_t*)&replayed_ccsds, get_ccsds_packet_len(&replayed_ccsds));
-                              Serial.println ();
+              case ENC_CCSDS: serialTransfer.txObj((const uint8_t*)&replayed_ccsds, 0);
+                              serialTransfer.sendData(get_ccsds_packet_len(&replayed_ccsds));
                               break;
             }            
             tm_this->serial_out_rate++;          
@@ -1337,7 +1335,7 @@ bool publish_udp (ccsds_t* ccsds_ptr) {
   if (tm_this->wifi_connected) {     
     build_json_str ((char*)&buffer, ccsds_ptr);
     wifiUDP.beginPacket(config_network.udp_server, config_network.udp_port);
-    wifiUDP.println (String("[") + get_ccsds_millis (ccsds_ptr) + "] " + pidName[PID] + " " + buffer);
+    wifiUDP.println (buffer);
     wifiUDP.endPacket();   
     tm_this->udp_rate++;
     return true;
@@ -1777,20 +1775,23 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
   switch (PID) {
     case STS_ESP32:      { 
                            sts_esp32_t* sts_esp32_ptr = (sts_esp32_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", 
-                                    sts_esp32_ptr->packet_ctr, eventName[sts_esp32_ptr->type], subsystemName[sts_esp32_ptr->subsystem], sts_esp32_ptr->message);
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", 
+                                    pidName[PID], sts_esp32_ptr->packet_ctr, sts_esp32_ptr->millis, 
+                                    eventName[sts_esp32_ptr->type], subsystemName[sts_esp32_ptr->subsystem], sts_esp32_ptr->message);
                          }
                          break;
     case STS_ESP32CAM:   { 
                            sts_esp32cam_t* sts_esp32cam_ptr = (sts_esp32cam_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", 
-                                    sts_esp32cam_ptr->packet_ctr, eventName[sts_esp32cam_ptr->type], subsystemName[sts_esp32cam_ptr->subsystem], sts_esp32cam_ptr->message);
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}", 
+                                    pidName[PID], sts_esp32cam_ptr->packet_ctr, sts_esp32cam_ptr->millis, 
+                                    eventName[sts_esp32cam_ptr->type], subsystemName[sts_esp32cam_ptr->subsystem], sts_esp32cam_ptr->message);
                          }
                          break;                  
     case TM_ESP32:       {
                            tm_esp32_t* esp32_ptr = (tm_esp32_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"mode\":\"%s\",\"state\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u],\"buf\":[%u,%u],\"fs\":[%u,%u],\"ntp\":%u,\"inst_rate\":[%u,%u,%u,%u,%u],\"comm_rate\":[%u,%u,%u,%u,%u],\"sep\":%d,\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}", 
-                                    esp32_ptr->packet_ctr, modeName[esp32_ptr->opsmode], stateName[esp32_ptr->state], esp32_ptr->error_ctr, esp32_ptr->warning_ctr, 
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"mode\":\"%s\",\"state\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u],\"buf\":[%u,%u],\"fs\":[%u,%u],\"ntp\":%u,\"inst_rate\":[%u,%u,%u,%u,%u],\"comm_rate\":[%u,%u,%u,%u,%u],\"sep\":%d,\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}", 
+                                    pidName[PID], esp32_ptr->packet_ctr, esp32_ptr->millis,  
+                                    modeName[esp32_ptr->opsmode], stateName[esp32_ptr->state], esp32_ptr->error_ctr, esp32_ptr->warning_ctr, 
                                     esp32_ptr->tc_exec_ctr, esp32_ptr->tc_fail_ctr,
                                     esp32_ptr->mem_free, esp32_ptr->fs_free, 
                                     esp32_ptr->yamcs_buffer, esp32_ptr->serial_out_buffer, 
@@ -1805,8 +1806,9 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                          break;
     case TM_ESP32CAM:    {
                            tm_esp32cam_t* esp32cam_ptr = (tm_esp32cam_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"mode\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u,%u],\"buf\":[%u,%u],\"fs\":[%u,%u],\"ntp\":%u,\"rate\":[%u,%u,%u,%u,%u,%u,%u,%u,%u],\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d%d\"}}",
-                                    esp32cam_ptr->packet_ctr, cameraModeName[esp32cam_ptr->opsmode], esp32cam_ptr->error_ctr, esp32cam_ptr->warning_ctr, 
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"mode\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u,%u],\"buf\":[%u,%u],\"fs\":[%u,%u],\"ntp\":%u,\"rate\":[%u,%u,%u,%u,%u,%u,%u,%u,%u],\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d%d\"}}",
+                                    pidName[PID], esp32cam_ptr->packet_ctr, esp32cam_ptr->millis,  
+                                    cameraModeName[esp32cam_ptr->opsmode], esp32cam_ptr->error_ctr, esp32cam_ptr->warning_ctr, 
                                     esp32cam_ptr->tc_exec_ctr, esp32cam_ptr->tc_fail_ctr,
                                     esp32cam_ptr->mem_free, esp32cam_ptr->fs_free, esp32cam_ptr->sd_free, 
                                     esp32cam_ptr->yamcs_buffer, esp32cam_ptr->serial_out_buffer, 
@@ -1820,14 +1822,15 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                          break;
     case TM_CAMERA:      {
                            tm_camera_t* ov2640_ptr = (tm_camera_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}", 
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}", 
+                                    pidName[PID], ov2640_ptr->packet_ctr, ov2640_ptr->millis, 
                                     ov2640_ptr->packet_ctr, cameraModeName[ov2640_ptr->camera_mode], cameraResolutionName[ov2640_ptr->resolution], ov2640_ptr->auto_res, ov2640_ptr->filename, ov2640_ptr->filesize, ov2640_ptr->exposure_ms, ov2640_ptr->sd_ms, ov2640_ptr->wifi_ms);
                          }
                          break;
-    case TM_GPS:         {
+    case TM_GPS:         { 
                            tm_gps_t* neo6mv2_ptr = (tm_gps_t*)ccsds_ptr;
                            *json_buffer++ = '{';
-                           json_buffer += sprintf (json_buffer, "\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d", neo6mv2_ptr->packet_ctr, gpsStatusName[neo6mv2_ptr->status], neo6mv2_ptr->satellites);
+                           json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"sts\":\"%s\",\"sats\":%d", pidName[PID], neo6mv2_ptr->packet_ctr, neo6mv2_ptr->millis, gpsStatusName[neo6mv2_ptr->status], neo6mv2_ptr->satellites);
                            if (neo6mv2_ptr->time_valid) {
                              json_buffer += sprintf (json_buffer, ",\"time\":\"%02d:%02d:%02d.%02d\"", neo6mv2_ptr->hours, neo6mv2_ptr->minutes, neo6mv2_ptr->seconds, neo6mv2_ptr->centiseconds);
                            }
@@ -1859,8 +1862,8 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                          break;
     case TM_MOTION:      {
                            tm_motion_t* mpu6050_ptr = (tm_motion_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}", 
-                                    mpu6050_ptr->packet_ctr, 
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}", 
+                                    pidName[PID], mpu6050_ptr->packet_ctr, mpu6050_ptr->millis, 
                                     mpu6050_ptr->accel_x, mpu6050_ptr->accel_y, mpu6050_ptr->accel_z, 
                                     mpu6050_ptr->gyro_x, mpu6050_ptr->gyro_y, mpu6050_ptr->gyro_z, 
                                     mpu6050_ptr->tilt, mpu6050_ptr->g, mpu6050_ptr->a, mpu6050_ptr->rpm,
@@ -1869,39 +1872,42 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                          break;
     case TM_PRESSURE:    {
                            tm_pressure_t* bmp280_ptr = (tm_pressure_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"p\":%u,\"p0\":%u,\"T\":%d,\"h\":%d,\"v_v\":%d,\"valid\":%u}", 
-                                    bmp280_ptr->packet_ctr, bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->height, bmp280_ptr->velocity_v, bmp280_ptr->height_valid);
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"p\":%u,\"p0\":%u,\"T\":%d,\"h\":%d,\"v_v\":%d,\"valid\":%u}", 
+                                    pidName[PID], bmp280_ptr->packet_ctr, bmp280_ptr->millis, 
+                                    bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->height, bmp280_ptr->velocity_v, bmp280_ptr->height_valid);
                          }
                          break;
     case TM_RADIO:       {
                            tm_radio_t* radio_ptr = (tm_radio_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"data\":\"%s\"}", radio_ptr->packet_ctr, get_hex_str((char*)&radio, sizeof(tm_radio_t)).c_str());
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"data\":\"%s\"}", 
+                                    pidName[PID], radio_ptr->packet_ctr, radio_ptr->millis, 
+                                    get_hex_str((char*)&radio, sizeof(tm_radio_t)).c_str());
                          }
                          break;
     case TIMER_ESP32:    {
-                           timer_esp32_t* timer_ptr = (timer_esp32_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"idle\":%u,\"instr\":[%u,%u,%u,%u,%u],\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u]}", 
-                                    timer_ptr->packet_ctr, 
-                                    timer_ptr->idle_duration,
-                                    timer_ptr->radio_duration, timer_ptr->pressure_duration, timer_ptr->motion_duration, timer_ptr->gps_duration, timer_ptr->esp32cam_duration,
-                                    timer_ptr->serial_duration, timer_ptr->ota_duration, timer_ptr->ftp_duration, timer_ptr->wifi_duration, timer_ptr->tc_duration,
-                                    timer_ptr->publish_fs_duration, timer_ptr->publish_serial_duration, timer_ptr->publish_yamcs_duration, timer_ptr->publish_udp_duration);
+                           timer_esp32_t* timer_esp32_ptr = (timer_esp32_t*)ccsds_ptr;
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"idle\":%u,\"instr\":[%u,%u,%u,%u,%u],\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u]}", 
+                                    pidName[PID], timer_esp32_ptr->packet_ctr, timer_esp32_ptr->millis,  
+                                    timer_esp32_ptr->idle_duration,
+                                    timer_esp32_ptr->radio_duration, timer_esp32_ptr->pressure_duration, timer_esp32_ptr->motion_duration, timer_esp32_ptr->gps_duration, timer_esp32_ptr->esp32cam_duration,
+                                    timer_esp32_ptr->serial_duration, timer_esp32_ptr->ota_duration, timer_esp32_ptr->ftp_duration, timer_esp32_ptr->wifi_duration, timer_esp32_ptr->tc_duration,
+                                    timer_esp32_ptr->publish_fs_duration, timer_esp32_ptr->publish_serial_duration, timer_esp32_ptr->publish_yamcs_duration, timer_esp32_ptr->publish_udp_duration);
                          }
                          break;
     case TIMER_ESP32CAM: { // TODO: fine-tune packet
-                           timer_esp32cam_t* timer_ptr = (timer_esp32cam_t*)ccsds_ptr;
-                           sprintf (json_buffer, "{\"ctr\":%u,\"idle\":%u,\"cam\":%u,\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u,%u]}", 
-                                    timer_ptr->packet_ctr, 
-                                    timer_ptr->idle_duration,
-                                    timer_ptr->camera_duration,
-                                    timer_ptr->serial_duration, timer_ptr->tc_duration, timer_ptr->sd_duration, timer_ptr->ftp_duration, timer_ptr->wifi_duration, 
-                                    timer_ptr->publish_sd_duration, timer_ptr->publish_fs_duration, timer_ptr->publish_serial_duration, timer_ptr->publish_yamcs_duration, timer_ptr->publish_udp_duration);
+                           timer_esp32cam_t* timer_esp32cam_ptr = (timer_esp32cam_t*)ccsds_ptr;
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"idle\":%u,\"cam\":%u,\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u,%u]}", 
+                                    pidName[PID], timer_esp32cam_ptr->packet_ctr, timer_esp32cam_ptr->millis, 
+                                    timer_esp32cam_ptr->idle_duration,
+                                    timer_esp32cam_ptr->camera_duration,
+                                    timer_esp32cam_ptr->serial_duration, timer_esp32cam_ptr->tc_duration, timer_esp32cam_ptr->sd_duration, timer_esp32cam_ptr->ftp_duration, timer_esp32cam_ptr->wifi_duration, 
+                                    timer_esp32cam_ptr->publish_sd_duration, timer_esp32cam_ptr->publish_fs_duration, timer_esp32cam_ptr->publish_serial_duration, timer_esp32cam_ptr->publish_yamcs_duration, timer_esp32cam_ptr->publish_udp_duration);
                          }
                          break;
-    case TC_ESP32:       {
+    case TC_ESP32:       { 
                            tc_esp32_t* tc_esp32_ptr = (tc_esp32_t*)ccsds_ptr;
                            *json_buffer++ = '{';
-                           json_buffer += sprintf (json_buffer, "\"cmd\":\"%s\"", tcName[tc_esp32_ptr->cmd_id-42]);
+                           json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32_ptr->cmd_id-42]);
                            if (tc_esp32_ptr->cmd_id-42 == TC_REBOOT or tc_esp32_ptr->cmd_id-42 == TC_SET_OPSMODE) {
                              json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", tc_esp32_ptr->int_parameter);
                            }
@@ -1915,10 +1921,10 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                            *json_buffer++ = 0;
                          }
                          break;
-    case TC_ESP32CAM:    {
+    case TC_ESP32CAM:    { 
                            tc_esp32cam_t* tc_esp32cam_ptr = (tc_esp32cam_t*)ccsds_ptr;
                            *json_buffer++ = '{';
-                           json_buffer += sprintf (json_buffer, "\"cmd\":\"%s\"", tcName[tc_esp32cam_ptr->cmd_id-42]);
+                           json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32cam_ptr->cmd_id-42]);
                            if (tc_esp32cam_ptr->cmd_id-42 == TC_REBOOT or tc_esp32cam_ptr->cmd_id-42 == TC_SET_OPSMODE) {
                              json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", tc_esp32cam_ptr->int_parameter);
                            }
@@ -1935,17 +1941,15 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
   }
 }
 
-bool parse_json (const char* json_string) { // TODO: maybe add millis as parameter somehow, take from str or take from current clock?
+bool parse_json (const char* json_string) {
   static StaticJsonDocument<JSON_MAX_SIZE> obj;
-  char * json_str = strchr (json_string, '{');
-  char * tag_str = strchr (json_string, ' ') + 1;
-  char * separator = strchr (tag_str, ' ');
-  separator[0] = 0x00;
-  deserializeJson(obj, (const char*)json_str);
-  switch (id_of (tag_str, sizeof(pidName[0]), (char*)pidName, sizeof(pidName))) {
+  deserializeJson(obj, (const char*)json_string);
+  uint16_t PID = id_of (obj["id"], sizeof(pidName[0]), (char*)pidName, sizeof(pidName));
+  switch (PID) {
     #ifdef PLATFORM_ESP32
-    case STS_ESP32CAM:  // {\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}
+    case STS_ESP32CAM:  // {\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}
                         sts_esp32cam.packet_ctr = obj["ctr"];
+                        sts_esp32cam.millis = obj["millis"],
                         sts_esp32cam.type = id_of ((const char*)obj["type"], sizeof(eventName[0]), (char*)&eventName, sizeof(eventName));
                         sts_esp32cam.subsystem = id_of ((const char*)obj["ss"], sizeof(subsystemName[0]), (char*)&subsystemName, sizeof(subsystemName));
                         strcpy (sts_esp32cam.message, obj["msg"]);
@@ -1954,6 +1958,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         break;                        
     case TM_ESP32CAM:   // {\"ctr\":%u,\"mode\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u,%u],\"buf\":[%u,%u],\"fs\":[%u,%u],\"ntp\":%u,\"rate\":[%u,%u,%u,%u,%u,%u,%u,%u,%u],\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d%d\"}}
                         esp32cam.packet_ctr = obj["ctr"];
+                        esp32cam.millis = obj["millis"],
                         esp32cam.opsmode = obj["mode"];
                         esp32cam.error_ctr = obj["err"];
                         esp32cam.warning_ctr = obj["warn"];
@@ -2003,6 +2008,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         break;                                                                                                                          
     case TM_CAMERA:     // {\"ctr\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}
                         ov2640.packet_ctr = obj["ctr"];
+                        ov2640.millis = obj["millis"],
                         ov2640.camera_mode = id_of(obj["mode"], sizeof(cameraModeName[0]), (char*)&cameraModeName, sizeof(cameraModeName));
                         ov2640.resolution = id_of(obj["res"], sizeof(cameraResolutionName[0]), (char*)cameraResolutionName, sizeof(cameraResolutionName));
                         ov2640.auto_res = obj["auto_res"];
@@ -2016,6 +2022,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
     case TIMER_ESP32CAM: // TODO: fine-tune packet
     	    		// {\"ctr\":%u,\"idle\":%u,\"cam\":%u,\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u,%u]}
                         timer_esp32cam.packet_ctr = obj["ctr"];
+                        timer_esp32cam.millis = obj["millis"],
                         timer_esp32cam.camera_duration = obj["cam"];
                         timer_esp32cam.serial_duration = obj["fun"][0];
                         timer_esp32cam.tc_duration = obj["fun"][1];
@@ -2091,6 +2098,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
     #ifdef PLATFORM_ESP32CAM
     case STS_ESP32:     // {\"ctr\":%u,\"type\":\"%s\",\"ss\":\"%s\",\"msg\":\"%s\"}
                         sts_esp32.packet_ctr = obj["ctr"];
+                        sts_esp32.millis = obj["millis"],
                         sts_esp32.type = id_of ((const char*)obj["type"], sizeof(eventName[0]), (char*)&eventName, sizeof(eventName));
                         sts_esp32.subsystem = id_of ((const char*)obj["ss"], sizeof(subsystemName[0]), (char*)&subsystemName, sizeof(subsystemName));
                         strcpy (sts_esp32.message, obj["msg"]);
@@ -2099,6 +2107,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         break;      
     case TM_ESP32:      // {\"ctr\":%u,\"mode\":\"%s\",\"state\":\"%s\",\"err\":%u,\"warn\":%u,\"tc\":{\"exec\":%u,\"fail\":%u},\"mem\":[%u,%u],\"buf\":[%u,%u],\"fs\":[%u,%u],\"ntp\":%u,\"inst_rate\":[%u,%u,%u,%u,%u],\"comm_rate\":[%u,%u,%u,%u,%u],\"sep\":%d,\"ena\":\"%d%d%d%d%d%d%d%d%d%d%d\",\"act\":\"%d%d%d%d%d%d%d%d\",\"conn\":{\"up\":\"%d%d\",\"warn\":\"%d%d\",\"err\":\"%d%d%d\"}}
                         esp32.packet_ctr = obj["ctr"];
+                        esp32.millis = obj["millis"],
                         esp32.opsmode = id_of(obj["mode"], sizeof(modeName[0]), (char*)&modeName, sizeof(modeName));
                         esp32.state = id_of(obj["sts"], sizeof(stateName[0]), (char*)&stateName, sizeof(stateName));
                         esp32.error_ctr = obj["err"];
@@ -2153,6 +2162,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         break;
     case TM_GPS:        // {\"ctr\":%u,\"sts\":\"%s\",\"sats\":%d,\"time\":\"%02d:%02d:%02d\",\"loc\":[%d,%d,%d],\"zero\":[%d,%d,%d],\"xyz\":[%d,%d,%d],\"v\":[%d,%d,%d],\"dop\":[%d,%d,%d],\"valid\":\"%d%d%d%d%d%d\"}
                         neo6mv2.packet_ctr = obj["ctr"];
+                        neo6mv2.millis = obj["millis"],
                         neo6mv2.status = id_of(obj["sts"], sizeof(gpsStatusName[0]), (char*)&gpsStatusName, sizeof(gpsStatusName));
                         neo6mv2.satellites = obj["sats"];
                         if (obj.containsKey("time")) {
@@ -2207,6 +2217,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         break;
     case TM_MOTION:     // {\"ctr\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}
                         mpu6050.packet_ctr = obj["ctr"];
+                        mpu6050.millis = obj["millis"],
                         mpu6050.accel_x = obj["accel"][0];
                         mpu6050.accel_y = obj["accel"][1];
                         mpu6050.accel_z = obj["accel"][2];
@@ -2225,6 +2236,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         break;
     case TM_PRESSURE:   // {\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f}
                         bmp280.packet_ctr = obj["ctr"];
+                        bmp280.millis = obj["millis"],
                         bmp280.pressure = obj["p"];
                         bmp280.zero_level_pressure = obj["p0"];
                         bmp280.height = obj["h"];
@@ -2235,11 +2247,13 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         break;
     case TM_RADIO:      // {\"ctr\":%u,\"data\":\"%s\"} 
                         radio.packet_ctr = obj["ctr"];
+                        radio.millis = obj["millis"],
                         // hex_to_bin ((byte*)&radio, obj["data"]); // TODO: find out with ArduinoJson throuws error
                         publish_packet ((ccsds_t*)&radio);
                         break;
     case TIMER_ESP32:   // {\"ctr\":%u,\"idle\":%u,\"instr\":[%u,%u,%u,%u,%u],\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u]}
                         timer_esp32.packet_ctr = obj["ctr"];
+                        timer_esp32.millis = obj["millis"],
                         timer_esp32.radio_duration = obj["instr"][0];
                         timer_esp32.pressure_duration = obj["instr"][1];
                         timer_esp32.motion_duration = obj["instr"][2];
@@ -2319,8 +2333,7 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
                         }
                         break;
     #endif
-    default:            sprintf (buffer, "Ignored JSON packet with PID %d", id_of (tag_str, sizeof(pidName[0]), (char*)pidName, sizeof(pidName)));
-                        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
+    default:            publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "Ignored JSON packet"); 
                         return false;
                         break;
   }
@@ -2330,136 +2343,38 @@ bool parse_json (const char* json_string) { // TODO: maybe add millis as paramet
 
 // SERIAL FUNCTIONALITY
 
-uint16_t serial_check () {
-  // gets data from Serial, put it in serial_in_buffer, and return length of string that is ready for processing or false if string is not complete
-  static uint8_t serial_status;
-  static uint16_t data_len;
-  static uint8_t pkt_apid;
-  static uint16_t serial_in_buffer_pos;
-  while(Serial.available()) {
-    var_timer.last_serial_in_millis = millis();
-    char c = Serial.read();
-    serial_in_buffer[serial_in_buffer_pos++] = c;
-    if (serial_status == SERIAL_COMPLETE) {
-      // new transmission started: find out what we're getting ...
-      switch (c) {
-        case 0x00:
-        case 0x01: // start of CCSDS transmission
-                   Serial.println ("DEBUG: Start of CCSDS transmission");
-                   serial_status = SERIAL_CCSDS;
-                   data_len = JSON_MAX_SIZE;
-                   break;
-        case '[':  // start of JSON-encoded data string (with a timestamp preamble [])
-                   Serial.println ("DEBUG: Start of JSON or ASCII transmission");
-                   serial_status = SERIAL_JSON;
-                   break;
-        case 'O':  
-        case 'o':  // keepalive or ASCII
-                   Serial.println ("DEBUG: Start of KEEPALIVE or ASCII transmission");
-                   serial_status = SERIAL_KEEPALIVE;
-                   break;
-        default:   // ASCII
-                   Serial.println ("Start of ASCII transmission");
-                   serial_status = SERIAL_ASCII;
-                   break;
-      }
+bool serial_setup () {
+  Serial.begin (SERIAL_BAUD);
+  Serial.println();
+  Serial.setDebugOutput (true);
+  serialTransfer.begin(Serial);
+}
+
+void serial_keepalive () {
+  if (!config_this->debug_over_serial and timer_this->millis - var_timer.last_serial_out_millis > KEEPALIVE_INTERVAL) {
+    if (tm_this->serial_connected) {
+      serialTransfer.txObj("O", 0);
+      serialTransfer.sendData(1);
     }
-    if (serial_status == SERIAL_CCSDS) {
-      if (serial_in_buffer_pos == 5) { // CCSDS header should be in, we can check whether it's valid
-        if (valid_ccsds_hdr ((ccsds_t*)&serial_in_buffer, PKT_TM) or valid_ccsds_hdr ((ccsds_t*)&serial_in_buffer, PKT_TC)) {
-          data_len = get_ccsds_packet_len ((ccsds_t*)&serial_in_buffer);
-        }
-        else {
-          sprintf (buffer, "Received packet over serial with invalid CCSDS header (%s...)", get_hex_str ((char*)serial_in_buffer, 6).c_str());
-          publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
-          serial_in_buffer_pos = 0;
-          serial_status = SERIAL_UNKNOWN;
-          return false;
-        }
-      }
-      if (serial_in_buffer_pos == data_len) { // CCSDS packet is complete               
-        Serial.println ("DEBUG: CCSDS packet complete");
-        if (!tm_this->serial_connected) { 
-          tm_this->serial_connected = true;
-          tm_this->warn_serial_connloss = false; 
-        }
-        tm_this->serial_in_rate++;
-        serial_status = SERIAL_COMPLETE;
-        serial_in_buffer_pos = 0;
-        return (data_len);              
-      }
+    else {
+      serialTransfer.txObj("o", 0);
+      serialTransfer.sendData(1);
     }
-    else { // normal ASCII encoded transmission (JSON, SERIAL, KEEPALIVE)
-      switch (c) {
-        case 0x0A:  // received carriage return, EOL reached
-                    if (serial_status == SERIAL_KEEPALIVE) {
-                      switch (serial_in_buffer[0]) {
-                        case 'O': // keep-alive confirming good connection by counterpart
-                                  if (!tm_this->serial_connected) {
-                                    tm_this->serial_connected = true;
-                                    tm_this->warn_serial_connloss = false; 
-                                  }
-                                  break;
-                        case 'o': // keep-alive indicating counterpart not receiving over serial
-                                  if (!config_this->debug_over_serial and tm_this->serial_connected) {
-                                    tm_this->serial_connected = false;
-                                    tm_this->warn_serial_connloss = true;
-                                  }
-                                  break;
-                      }
-                      Serial.println ("DEBUG: KEEPALIVE transmission completed");
-                      serial_status = SERIAL_COMPLETE;
-                      serial_in_buffer_pos = 0;
-                      return false;
-                    }
-                    else { // ASCII/JSON transmission complete
-                      serial_in_buffer[serial_in_buffer_pos-1] = 0x00;
-                      if (!tm_this->serial_connected) { 
-                        tm_this->serial_connected = true;
-                        tm_this->warn_serial_connloss = false; 
-                      }
-                      tm_this->serial_in_rate++;
-                      Serial.print (String("DEBUG: ASCII/JSON transmission completed: [") + strlen(serial_in_buffer) + "] " + serial_in_buffer);
-                      serial_status = SERIAL_COMPLETE;
-                      serial_in_buffer_pos = 0;
-                      return (strlen(serial_in_buffer));
-                    }
-                    break;
-        case 0x0D:  if (serial_status == SERIAL_COMPLETE) {    
-                      // received line feed after carriage return, all smooth, ignore
-                      serial_in_buffer_pos = 0;
-                    }
-                    else {
-                      // received line feed but not after carriage return, don't know what this is ...
-                      serial_in_buffer_pos = 0;
-                      serial_status = SERIAL_UNKNOWN;
-                      sprintf (buffer, "Received CR without LF from %s", subsystemName[SS_OTHER]);
-                      publish_event (STS_THIS, SS_OTHER, EVENT_WARNING, buffer);                    
-                    }
-                    break;
-        default:    // happily build up ASCII-encoded string
-                    if (serial_in_buffer_pos > 1 and serial_status == SERIAL_KEEPALIVE) {
-                      // we're getting characters after 'o' or 'O', this is a normal ASCII transmission
-                      serial_status = SERIAL_ASCII;
-                    }
-                    break;  
-      }
-    }
-    if (serial_in_buffer_pos == JSON_MAX_SIZE) { // something is wrong: line too long
-      serial_in_buffer[JSON_MAX_SIZE-1] = '\0';
-      serial_in_buffer_pos = 0;
-      Serial.println (get_hex_str ((char*)&serial_in_buffer, JSON_MAX_SIZE));
-      if (!config_this->debug_over_serial) {
-        tm_this->serial_connected = false;
-      }
-      sprintf (buffer, "Received too long message from %s", subsystemName[SS_OTHER]);
-      publish_event (STS_THIS, SS_OTHER, EVENT_ERROR, buffer);
-      Serial.println (String("DEBUG: too long message on Serial: ") + serial_in_buffer);
-      serial_status = SERIAL_UNKNOWN;
-      return false; // invalid serial_in_buffer content, do not use
-    }
-  } // while Serial.available
-  return false; // no serial data ready
+    var_timer.last_serial_out_millis = millis();
+  }
+  if (!config_this->debug_over_serial and tm_this->serial_connected and millis()-var_timer.last_serial_in_millis > 2*KEEPALIVE_INTERVAL) {
+    tm_this->serial_connected = false;
+    tm_this->warn_serial_connloss = true;
+  }
+}
+
+bool serial_check () {
+  if (serialTransfer.available()) {
+    serialTransfer.rxObj(serial_in_buffer, 0);
+    tm_this->serial_in_rate++;
+    return true;
+  }
+  return false;
 }
 
 void serial_parse () {
