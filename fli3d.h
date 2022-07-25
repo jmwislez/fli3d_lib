@@ -32,7 +32,6 @@
 #include <SerialTransfer.h>
 
 #define SERIAL_BAUD               115200
-#define SERIAL_SIZE_RX            128
 #define JSON_MAX_SIZE             512
 #define WIFI_TIMEOUT              120    // s (time-out when initializing)
 #define NTP_TIMEOUT               10     // s (time-out when initializing)
@@ -264,8 +263,8 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   uint8_t     serial_in_rate;
   uint8_t     serial_out_rate;
   uint8_t     fs_rate;                                                          
-  uint8_t    yamcs_buffer;
-  uint8_t    serial_out_buffer;
+  uint8_t     yamcs_buffer;
+  uint8_t     serial_out_buffer;
   uint16_t    mem_free;
   uint16_t    fs_free;
   bool        radio_enabled:1;         // 7
@@ -484,7 +483,11 @@ struct __attribute__ ((packed)) tm_radio_t { // APID: 50 (32)
   uint8_t     motion_g;                // G / 10          (0 - 25.5 G)  
   int8_t      motion_a;                // m/s2            (-125 - 126 m/s2)
   int8_t      motion_rpm;              //                 (-125 - 126 rpm)  
-  uint8_t     gps_satellites;          // not all bits needed, spare available (TODO: use for ESP32CAM?)
+  uint8_t     gps_satellites:4;        //   4-7
+  bool        esp32_buffer_active:1;   //    3
+  bool        esp32cam_buffer_active:1; //    2
+  bool        esp32cam_sd_image_enabled:1; //  1
+  bool        esp32cam_wifi_image_enabled:1; // 0
   int8_t      gps_velocity_v;          // m/s             (-125 - 126 m/s)
   uint8_t     gps_velocity;            // m/s             (0 - 255 m/s)
   uint8_t     gps_height;              // m               (0 - 255 m)

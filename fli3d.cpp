@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-07-24
+ * version: 2022-07-25
  */
 
 #ifndef PLATFORM_ESP8266_RADIO
@@ -313,13 +313,13 @@ void load_default_config () {
   config_esp32.wifi_enable = true;
   config_esp32.wifi_sta_enable = true;
   config_esp32.wifi_ap_enable = true;
-  config_esp32.wifi_udp_enable = true;
+  config_esp32.wifi_udp_enable = false;
   config_esp32.wifi_yamcs_enable = true;
   config_esp32.fs_enable = true;
   config_esp32.ftp_enable = true;
   config_esp32.ftp_fs = FS_LITTLEFS;
   config_esp32.buffer_fs = FS_LITTLEFS;
-  config_esp32.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
+  config_esp32.serial_format = ENC_CCSDS;
   config_esp32.debug_over_serial = false;
   config_esp32.ota_enable = false;
   config_esp32.motion_udp_raw_enable = false;
@@ -343,7 +343,7 @@ void load_default_config () {
   config_esp32cam.sd_image_enable = true;
   config_esp32cam.buffer_fs = FS_SD_MMC;
   config_esp32cam.ftp_fs = FS_SD_MMC;
-  config_esp32cam.serial_format = ENC_JSON; // TODO: put to ENC_CCSDS after debug phase
+  config_esp32cam.serial_format = ENC_CCSDS;
   config_esp32cam.debug_over_serial = false;
   //                       0: STS_ESP32 
   //                       |  1: STS_ESP32CAM 
@@ -440,10 +440,10 @@ bool file_load_config (uint8_t filesystem, const char* filename) {
   File file;
   switch (filesystem) {
   case FS_LITTLEFS: file = LITTLEFS.open (filename);
-  	                break;
+  	            break;
   #ifdef PLATFORM_ESP32CAM
   case FS_SD_MMC:   file = SD_MMC.open (filename);
-  	                break;
+  	            break;
   #endif
   }
   if (!file) {
@@ -461,8 +461,9 @@ bool file_load_config (uint8_t filesystem, const char* filename) {
       if (linebuffer[i] == '\n' or !file.available()) { // full line read
         linebuffer[i] = 0; // mark end of c string
         if (set_parameter (String(linebuffer).substring(0, value_start-1).c_str(), String(linebuffer).substring(value_start).c_str())) {
-          Serial.println (buffer);
-        }
+          serialTransfer.txObj(buffer, 0);
+          serialTransfer.sendData(strlen(buffer));
+        }  
         i = 0;
       }
       else {
@@ -504,24 +505,40 @@ bool file_load_routing (uint8_t filesystem, const char* filename) {
       if (linebuffer[i] == '\n' or !file.available()) { // full line read
         linebuffer[i] = 0; // mark end of c string
         strcpy (parameter, String(linebuffer).substring(value_start).c_str());
-        if (String(linebuffer).startsWith("rt_serial")) {
-          Serial.println ("Set routing_serial to " + set_routing (routing_serial, (const char*)parameter));
+        if (String(linebuffer).startsWith("rt_serial")) {\          
+          sprintf (buffer, "Set routing_serial to %s", set_routing (routing_serial, (const char*)parameter));
+          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
         }
         if (String(linebuffer).startsWith("rt_yamcs")) {
-          Serial.println ("Set routing_yamcs to " + set_routing (routing_yamcs, (const char*)parameter));
+          sprintf (buffer, "Set routing_yamcs to %s", set_routing (routing_yamcs, (const char*)parameter));
+          serialTransfer.txObj(buffer, 0);
+          serialTransfer.sendData(strlen(buffer));
+          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
         }
         if (String(linebuffer).startsWith("rt_udp")) {
-          Serial.println ("Set routing_udp to " + set_routing (routing_udp, (const char*)parameter));
+          sprintf (buffer, "Set routing_udp to %s", set_routing (routing_udp, (const char*)parameter));
+          serialTransfer.txObj(buffer, 0);
+          serialTransfer.sendData(strlen(buffer));
+          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
         }
         if (String(linebuffer).startsWith("rt_fs")) {
-          Serial.println ("Set routing_fs to " + set_routing (routing_fs, (const char*)parameter));
+          sprintf (buffer, "Set routing_fs to %s", set_routing (routing_fs, (const char*)parameter));
+          serialTransfer.txObj(buffer, 0);
+          serialTransfer.sendData(strlen(buffer));
+          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
         }
         #ifdef PLATFORM_ESP32CAM
         if (String(linebuffer).startsWith("rt_sd_json")) {
-          Serial.println ("Set routing_sd_json to " + set_routing (routing_sd_json, (const char*)parameter));
+          sprintf (buffer, "Set routing_sd_json to %s", set_routing (routing_sd_json, (const char*)parameter));
+          serialTransfer.txObj(buffer, 0);
+          serialTransfer.sendData(strlen(buffer));
+          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
         }
         if (String(linebuffer).startsWith("rt_sd_ccsds")) {
-          Serial.println ("Set routing_sd_ccsds to " + set_routing (routing_sd_ccsds, (const char*)parameter));
+          sprintf (buffer, "Set routing_sd_ccsds to %s", set_routing (routing_sd_ccsds, (const char*)parameter));
+          serialTransfer.txObj(buffer, 0);
+          serialTransfer.sendData(strlen(buffer));
+          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
         }
         #endif
         i = 0;
@@ -533,7 +550,6 @@ bool file_load_routing (uint8_t filesystem, const char* filename) {
   }
   file.close();
   sprintf (buffer, "Read routing from '%s' configuration file on %s", config_this->routing_file, fsName[filesystem]);
-  publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
   tm_this->fs_active = true;
   return true;
 }
@@ -1455,6 +1471,7 @@ uint16_t update_packet (ccsds_t* ccsds_ptr) {
                          radio.esp32_err_serial_dataloss = esp32.err_serial_dataloss;
                          radio.esp32_err_yamcs_dataloss = esp32.err_yamcs_dataloss;
                          radio.esp32_err_fs_dataloss = esp32.err_fs_dataloss;
+                         radio.esp32_buffer_active = esp32.buffer_active;
                          radio.separation_sts = esp32.separation_sts;
                          radio.esp32cam_serial_connected = esp32cam.serial_connected;
                          radio.esp32cam_wifi_connected = esp32cam.wifi_connected;
@@ -1464,6 +1481,8 @@ uint16_t update_packet (ccsds_t* ccsds_ptr) {
                          radio.esp32cam_err_yamcs_dataloss = esp32cam.err_yamcs_dataloss;
                          radio.esp32cam_err_fs_dataloss = esp32cam.err_fs_dataloss;
                          radio.esp32cam_err_sd_dataloss = esp32cam.err_sd_dataloss;
+                         radio.esp32cam_buffer_active = esp32cam.buffer_active;
+                         radio.esp32cam_sd_image_enabled = esp32cam.wifi_image_enabled;
                          break;
     case TIMER_ESP32:    timer_esp32.packet_ctr++;
                          timer_esp32.idle_duration = max(0, 1000 - timer_esp32.radio_duration - timer_esp32.pressure_duration - timer_esp32.motion_duration - timer_esp32.gps_duration - timer_esp32.esp32cam_duration - timer_esp32.serial_duration - timer_esp32.ota_duration - timer_esp32.ftp_duration - timer_esp32.wifi_duration - timer_esp32.tc_duration);
@@ -1824,7 +1843,7 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                            tm_camera_t* ov2640_ptr = (tm_camera_t*)ccsds_ptr;
                            sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"mode\":\"%s\",\"res\":\"%s\",\"auto_res\":%d,\"file\":\"%s\",\"size\":%u,\"ms\":{\"exp\":%u,\"sd\":%u,\"wifi\":%u}}", 
                                     pidName[PID], ov2640_ptr->packet_ctr, ov2640_ptr->millis, 
-                                    ov2640_ptr->packet_ctr, cameraModeName[ov2640_ptr->camera_mode], cameraResolutionName[ov2640_ptr->resolution], ov2640_ptr->auto_res, ov2640_ptr->filename, ov2640_ptr->filesize, ov2640_ptr->exposure_ms, ov2640_ptr->sd_ms, ov2640_ptr->wifi_ms);
+                                    cameraModeName[ov2640_ptr->camera_mode], cameraResolutionName[ov2640_ptr->resolution], ov2640_ptr->auto_res, ov2640_ptr->filename, ov2640_ptr->filesize, ov2640_ptr->exposure_ms, ov2640_ptr->sd_ms, ov2640_ptr->wifi_ms);
                          }
                          break;
     case TM_GPS:         { 
@@ -2345,8 +2364,7 @@ bool parse_json (const char* json_string) {
 
 bool serial_setup () {
   Serial.begin (SERIAL_BAUD);
-  Serial.println();
-  Serial.setDebugOutput (true);
+  Serial.setDebugOutput (false);
   serialTransfer.begin(Serial);
 }
 
@@ -2399,6 +2417,8 @@ bool cmd_reboot (uint8_t subsystem) {
     case 0: // this
             sprintf (buffer, "Rebooting %s subsystem", subsystemName[SS_THIS]);
             publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
+            sync_file_ccsds ();
+            sync_file_json ();
             delay (1000);
             ESP.restart();
             break;
@@ -2419,6 +2439,8 @@ bool cmd_reboot (uint8_t subsystem) {
             publish_packet ((ccsds_t*)tc_other);
             sprintf (buffer, "Sending reboot command to %s and rebooting %s subsystem", subsystemName[SS_OTHER], subsystemName[SS_THIS]);
             publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
+            sync_file_ccsds ();
+            sync_file_json ();
             delay (1000);
             ESP.restart();
   }     
