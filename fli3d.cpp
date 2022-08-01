@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-07-25
+ * version: 2022-08-01
  */
 
 #ifndef PLATFORM_ESP8266_RADIO
@@ -175,17 +175,17 @@ bool fs_flush_data () {
 }
 
 void create_today_dir (uint8_t filesystem) {
+  char today_tag[12];
   char sequencer1 = 'A';
   char sequencer2 = 'A';
-  char today_tag[16];
   timeClient.update();
   sync_file_ccsds ();
   sync_file_json ();
   #ifdef PLATFORM_ESP32  
-  while (!strcmp(today_dir, "/"), (filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir))) {
+  while (!strcmp(today_dir, "/") or (filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir))) {
   #endif
   #ifdef PLATFORM_ESP32CAM  
-  while (!strcmp(today_dir, "/"), ((filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir)) or (filesystem == FS_SD_MMC and SD_MMC.exists(today_dir)))) {
+  while (!strcmp(today_dir, "/") or ((filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir)) or (filesystem == FS_SD_MMC and SD_MMC.exists(today_dir)))) {
   #endif
     sprintf (today_tag, "%s%s%s%c%c", timeClient.getFormattedDate().substring(0,4), timeClient.getFormattedDate().substring(5,7), timeClient.getFormattedDate().substring(8,10), sequencer1, sequencer2++);
     if (sequencer2 == '[') {
@@ -225,6 +225,8 @@ void create_today_dir (uint8_t filesystem) {
 
 uint16_t fs_free () {
   if (config_this->fs_enable) {
+    sync_file_ccsds ();
+    sync_file_json ();
     if (tm_this->fs_enabled and LITTLEFS.totalBytes()-LITTLEFS.usedBytes() <= 8192) {
       tm_this->fs_enabled = false;
       tm_this->err_fs_dataloss = true;
@@ -313,14 +315,13 @@ void load_default_config () {
   config_esp32.wifi_enable = true;
   config_esp32.wifi_sta_enable = true;
   config_esp32.wifi_ap_enable = true;
-  config_esp32.wifi_udp_enable = false;
+  config_esp32.wifi_udp_enable = true;
   config_esp32.wifi_yamcs_enable = true;
   config_esp32.fs_enable = true;
   config_esp32.ftp_enable = true;
   config_esp32.ftp_fs = FS_LITTLEFS;
   config_esp32.buffer_fs = FS_LITTLEFS;
   config_esp32.serial_format = ENC_CCSDS;
-  config_esp32.debug_over_serial = false;
   config_esp32.ota_enable = false;
   config_esp32.motion_udp_raw_enable = false;
   config_esp32.gps_udp_raw_enable = false;
@@ -344,7 +345,6 @@ void load_default_config () {
   config_esp32cam.buffer_fs = FS_SD_MMC;
   config_esp32cam.ftp_fs = FS_SD_MMC;
   config_esp32cam.serial_format = ENC_CCSDS;
-  config_esp32cam.debug_over_serial = false;
   //                       0: STS_ESP32 
   //                       |  1: STS_ESP32CAM 
   //                       |  |  2: TM_ESP32 
@@ -461,8 +461,7 @@ bool file_load_config (uint8_t filesystem, const char* filename) {
       if (linebuffer[i] == '\n' or !file.available()) { // full line read
         linebuffer[i] = 0; // mark end of c string
         if (set_parameter (String(linebuffer).substring(0, value_start-1).c_str(), String(linebuffer).substring(value_start).c_str())) {
-          serialTransfer.txObj(buffer, 0);
-          serialTransfer.sendData(strlen(buffer));
+          publish_udp_text (buffer);
         }  
         i = 0;
       }
@@ -507,38 +506,28 @@ bool file_load_routing (uint8_t filesystem, const char* filename) {
         strcpy (parameter, String(linebuffer).substring(value_start).c_str());
         if (String(linebuffer).startsWith("rt_serial")) {\          
           sprintf (buffer, "Set routing_serial to %s", set_routing (routing_serial, (const char*)parameter));
-          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
+          publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_yamcs")) {
           sprintf (buffer, "Set routing_yamcs to %s", set_routing (routing_yamcs, (const char*)parameter));
-          serialTransfer.txObj(buffer, 0);
-          serialTransfer.sendData(strlen(buffer));
-          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
+          publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_udp")) {
           sprintf (buffer, "Set routing_udp to %s", set_routing (routing_udp, (const char*)parameter));
-          serialTransfer.txObj(buffer, 0);
-          serialTransfer.sendData(strlen(buffer));
-          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
+          publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_fs")) {
           sprintf (buffer, "Set routing_fs to %s", set_routing (routing_fs, (const char*)parameter));
-          serialTransfer.txObj(buffer, 0);
-          serialTransfer.sendData(strlen(buffer));
-          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
+          publish_udp_text (buffer);
         }
         #ifdef PLATFORM_ESP32CAM
         if (String(linebuffer).startsWith("rt_sd_json")) {
           sprintf (buffer, "Set routing_sd_json to %s", set_routing (routing_sd_json, (const char*)parameter));
-          serialTransfer.txObj(buffer, 0);
-          serialTransfer.sendData(strlen(buffer));
-          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
+          publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_sd_ccsds")) {
           sprintf (buffer, "Set routing_sd_ccsds to %s", set_routing (routing_sd_ccsds, (const char*)parameter));
-          serialTransfer.txObj(buffer, 0);
-          serialTransfer.sendData(strlen(buffer));
-          publish_event (STS_THIS, SS_THIS, EVENT_INFO, buffer);
+          publish_udp_text (buffer);
         }
         #endif
         i = 0;
@@ -567,6 +556,7 @@ String set_routing (char* routing_table, const char* routing_string) {
   	  return_string += String(pidName[PID++]) + ":1 ";
   	}
   }
+  publish_udp_text (return_string.c_str());
   return (return_string);
 }
 
@@ -574,122 +564,117 @@ bool set_parameter (const char* parameter, const char* value) {
   bool success = false;
   if (!strcmp(parameter, "wifi_ssid")) { 
     strcpy (config_network.wifi_ssid, value);
-    sprintf (buffer, "Set wifi_ssid to %s", config_network.wifi_ssid);
+    sprintf (buffer, "Set wifi_ssid to %s\0", config_network.wifi_ssid);
     success = true;
   }
   else if (!strcmp(parameter, "wifi_password")) { 
     strcpy (config_network.wifi_password, value);
-    sprintf (buffer, "Set wifi_password to %s", config_network.wifi_password);
+    sprintf (buffer, "Set wifi_password to %s\0", config_network.wifi_password);
     success = true;
   }
   else if (!strcmp(parameter, "ap_ssid")) { 
     strcpy (config_network.ap_ssid, value);
-    sprintf (buffer, "Set ap_ssid to %s", config_network.ap_ssid);
+    sprintf (buffer, "Set ap_ssid to %s\0", config_network.ap_ssid);
     success = true;
   }
   else if (!strcmp(parameter, "ap_password")) { 
     strcpy (config_network.ap_password, value);
-    sprintf (buffer, "Set ap_password to %s", config_network.ap_password);
+    sprintf (buffer, "Set ap_password to %s\0", config_network.ap_password);
     success = true;
   }
   else if (!strcmp(parameter, "ftp_user")) { 
     strcpy (config_network.ftp_user, value);
-    sprintf (buffer, "Set ftp_user to %s", config_network.ftp_user);
+    sprintf (buffer, "Set ftp_user to %s\0", config_network.ftp_user);
     success = true;
   }
   else if (!strcmp(parameter, "ftp_password")) { 
     strcpy (config_network.ftp_password, value);
-    sprintf (buffer, "Set ftp_password to %s", config_network.ftp_password);
+    sprintf (buffer, "Set ftp_password to %s\0", config_network.ftp_password);
     success = true;
   }
   else if (!strcmp(parameter, "udp_server")) { 
     strcpy (config_network.udp_server, value);
-    sprintf (buffer, "Set udp_server to %s", config_network.udp_server);
+    sprintf (buffer, "Set udp_server to %s\0", config_network.udp_server);
     success = true;
   }
   else if (!strcmp(parameter, "yamcs_server")) { 
     strcpy (config_network.yamcs_server, value);
-    sprintf (buffer, "Set yamcs_server to %s", config_network.yamcs_server);
+    sprintf (buffer, "Set yamcs_server to %s\0", config_network.yamcs_server);
     success = true;
   }
   else if (!strcmp(parameter, "ntp_server")) { 
     strcpy (config_network.ntp_server, value);
-    sprintf (buffer, "Set ntp_server to %s", config_network.ntp_server);
+    sprintf (buffer, "Set ntp_server to %s\0", config_network.ntp_server);
     success = true;
   }
   else if (!strcmp(parameter, "udp_port")) { 
     config_network.udp_port = atoi(value);
-    sprintf (buffer, "Set udp_port to %u", config_network.udp_port);
+    sprintf (buffer, "Set udp_port to %u\0", config_network.udp_port);
     success = true;
   }
   else if (!strcmp(parameter, "yamcs_tm_port")) { 
     config_network.yamcs_tm_port = atoi(value);
-    sprintf (buffer, "Set yamcs_tm_port to %u", config_network.yamcs_tm_port);
+    sprintf (buffer, "Set yamcs_tm_port to %u\0", config_network.yamcs_tm_port);
     success = true;
   }
   else if (!strcmp(parameter, "yamcs_tc_port")) { 
     config_network.yamcs_tc_port = atoi(value);
-    sprintf (buffer, "Set yamcs_tc_port to %u", config_network.yamcs_tc_port);
+    sprintf (buffer, "Set yamcs_tc_port to %u\0", config_network.yamcs_tc_port);
     success = true;
   }  
   else if (!strcmp(parameter, "wifi_enable")) { 
     config_this->wifi_enable = atoi(value);
-    sprintf (buffer, "Set wifi_enable to %s", config_this->wifi_enable?"true":"false");
+    sprintf (buffer, "Set wifi_enable to %s\0", config_this->wifi_enable?"true":"false");
     success = true;
   }
   else if (!strcmp(parameter, "wifi_sta_enable")) { 
     config_this->wifi_sta_enable = atoi(value);
-    sprintf (buffer, "Set wifi_sta_enable to %s", config_this->wifi_sta_enable?"true":"false");
+    sprintf (buffer, "Set wifi_sta_enable to %s\0", config_this->wifi_sta_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "wifi_ap_enable")) { 
     config_this->wifi_ap_enable = atoi(value);
-    sprintf (buffer, "Set wifi_ap_enable to %s", config_this->wifi_ap_enable?"true":"false");
+    sprintf (buffer, "Set wifi_ap_enable to %s\0", config_this->wifi_ap_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "wifi_udp_enable")) { 
     config_this->wifi_udp_enable = atoi(value);
-    sprintf (buffer, "Set wifi_udp_enable to %s", config_this->wifi_udp_enable?"true":"false");
+    sprintf (buffer, "Set wifi_udp_enable to %s\0", config_this->wifi_udp_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "wifi_yamcs_enable")) { 
     config_this->wifi_yamcs_enable = atoi(value);
-    sprintf (buffer, "Set wifi_yamcs_enable to %s", config_this->wifi_yamcs_enable?"true":"false");
+    sprintf (buffer, "Set wifi_yamcs_enable to %s\0", config_this->wifi_yamcs_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "fs_enable")) { 
     config_this->fs_enable = atoi(value);
-    sprintf (buffer, "Set fs_enable to %s", config_this->fs_enable?"true":"false");
+    sprintf (buffer, "Set fs_enable to %s\0", config_this->fs_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "ftp_enable")) { 
     config_this->ftp_enable = atoi(value);
-    sprintf (buffer, "Set ftp_enable to %s", config_this->ftp_enable?"true":"false");
+    sprintf (buffer, "Set ftp_enable to %s\0", config_this->ftp_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "camera_enable")) { 
     config_this->camera_enable = atoi(value);
-    sprintf (buffer, "Set camera_enable to %s", config_this->camera_enable?"true":"false");
+    sprintf (buffer, "Set camera_enable to %s\0", config_this->camera_enable?"true":"false");
     success = true;
   } 
   else if (!strcmp(parameter, "ftp_fs")) { 
     config_this->ftp_fs = atoi(value);
-    sprintf (buffer, "Set ftp_fs to %s", fsName[config_this->ftp_fs]);
+    sprintf (buffer, "Set ftp_fs to %s\0", fsName[config_this->ftp_fs]);
     success = true;
   } 
   else if (!strcmp(parameter, "buffer_fs")) { 
     config_this->buffer_fs = atoi(value);
-    sprintf (buffer, "Set buffer_fs to %s", fsName[config_this->buffer_fs]);
+    sprintf (buffer, "Set buffer_fs to %s\0", fsName[config_this->buffer_fs]);
     success = true;
   } 
   else if (!strcmp(parameter, "serial_format")) { 
     config_this->serial_format = atoi(value);
-    sprintf (buffer, "Set serial_format to %s", dataEncodingName[config_this->serial_format]);
-    success = true;
-  }  
-  else if (!strcmp(parameter, "debug_over_serial")) { 
-    config_this->debug_over_serial = atoi(value);
-    sprintf (buffer, "Set debug_over_serial to %s", config_this->debug_over_serial?"true":"false");
+    sprintf (buffer, "Set serial_format to %s\0", dataEncodingName[config_this->serial_format]);
     success = true;
   }  
   #ifdef PLATFORM_ESP32
@@ -697,7 +682,7 @@ bool set_parameter (const char* parameter, const char* value) {
     config_this->radio_rate = atoi(value);
     if (config_this->radio_rate) {
       var_timer.radio_interval = (1000 / config_this->radio_rate);
-      sprintf (buffer, "Set radio_rate to %u Hz", config_this->radio_rate);
+      sprintf (buffer, "Set radio_rate to %u Hz\0", config_this->radio_rate);
     }
     else {
       tm_this->radio_enabled = false;
@@ -709,7 +694,7 @@ bool set_parameter (const char* parameter, const char* value) {
     config_this->pressure_rate = atoi(value);
     if (config_this->pressure_rate) {
       var_timer.pressure_interval = (1000 / config_this->pressure_rate);
-      sprintf (buffer, "Set pressure_rate to %u Hz", config_this->pressure_rate);
+      sprintf (buffer, "Set pressure_rate to %u Hz\0", config_this->pressure_rate);
     }
     else {
       tm_this->pressure_enabled = false;
@@ -722,11 +707,11 @@ bool set_parameter (const char* parameter, const char* value) {
      if (config_this->motion_rate) {
       var_timer.motion_interval = (1000 / config_this->motion_rate);
       motion_set_samplerate (config_this->motion_rate);
-      sprintf (buffer, "Set motion_rate to %u Hz", config_this->motion_rate);
+      sprintf (buffer, "Set motion_rate to %u Hz\0", config_this->motion_rate);
     }
     else {
       tm_this->motion_enabled = false;
-      sprintf (buffer, "Set motion_enabled to false");
+      sprintf (buffer, "Set motion_enabled to false\0");
     }
     success = true;
   } 
@@ -737,139 +722,140 @@ bool set_parameter (const char* parameter, const char* value) {
       if (esp32.gps_enabled) {
         gps_set_samplerate (config_this->gps_rate);
       }
-      sprintf (buffer, "Set gps_rate to %u Hz", config_this->gps_rate); 
+      sprintf (buffer, "Set gps_rate to %u Hz\0", config_this->gps_rate); 
     }
     else {
       tm_this->gps_enabled = false;
-      sprintf (buffer, "Set gps_enabled to false");
+      sprintf (buffer, "Set gps_enabled to false\0");
     }
     success = true;
   } 
   else if (!strcmp(parameter, "radio_enable")) { 
     config_this->radio_enable = atoi(value);
-    sprintf (buffer, "Set radio_enable to %s", config_this->radio_enable?"true":"false");
+    sprintf (buffer, "Set radio_enable to %s\0", config_this->radio_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "pressure_enable")) { 
     config_this->pressure_enable = atoi(value);
-    sprintf (buffer, "Set pressure_enable to %s", config_this->pressure_enable?"true":"false");
+    sprintf (buffer, "Set pressure_enable to %s\0", config_this->pressure_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "motion_enable")) { 
     config_this->motion_enable = atoi(value);
-    sprintf (buffer, "Set motion_enable to %s", config_this->motion_enable?"true":"false");
+    sprintf (buffer, "Set motion_enable to %s\0", config_this->motion_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "gps_enable")) { 
     config_this->gps_enable = atoi(value);
-    sprintf (buffer, "Set gps_enable to %s", config_this->gps_enable?"true":"false");
+    sprintf (buffer, "Set gps_enable to %s\0", config_this->gps_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "ota_enable")) { 
     config_this->ota_enable = atoi(value);
-    sprintf (buffer, "Set ota_enable to %s", config_this->ota_enable?"true":"false");
+    sprintf (buffer, "Set ota_enable to %s\0", config_this->ota_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "motion_udp_raw_enable")) { 
     config_this->motion_udp_raw_enable = atoi(value);
-    sprintf (buffer, "Set motion_udp_raw_enable to %s", config_this->motion_udp_raw_enable?"true":"false");
+    sprintf (buffer, "Set motion_udp_raw_enable to %s\0", config_this->motion_udp_raw_enable?"true":"false");
     success = true;
   }
   else if (!strcmp(parameter, "gps_udp_raw_enable")) { 
     config_this->gps_udp_raw_enable = atoi(value);
-    sprintf (buffer, "Set gps_udp_raw_enable to %s", config_this->gps_udp_raw_enable?"true":"false");
+    sprintf (buffer, "Set gps_udp_raw_enable to %s\0", config_this->gps_udp_raw_enable?"true":"false");
     success = true;
   }
   else if (!strcmp(parameter, "mpu6050_accel_offset_x")) { 
     config_this->mpu6050_accel_offset_x = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_x to %d", config_this->mpu6050_accel_offset_x);
+    sprintf (buffer, "Set mpu6050_accel_offset_x to %d\0", config_this->mpu6050_accel_offset_x);
     success = true;
   }  
   else if (!strcmp(parameter, "mpu6050_accel_offset_y")) { 
     config_this->mpu6050_accel_offset_y = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_y to %d", config_this->mpu6050_accel_offset_y);
+    sprintf (buffer, "Set mpu6050_accel_offset_y to %d\0", config_this->mpu6050_accel_offset_y);
     success = true;
   }  
   else if (!strcmp(parameter, "mpu6050_accel_offset_z")) { 
     config_this->mpu6050_accel_offset_z = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_z to %d", config_this->mpu6050_accel_offset_z);
+    sprintf (buffer, "Set mpu6050_accel_offset_z to %d\0", config_this->mpu6050_accel_offset_z);
     success = true;
   }
   else if (!strcmp(parameter, "mpu6050_accel_sensitivity")) { 
     config_this->mpu6050_accel_sensitivity = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_sensitivity to %d", config_this->mpu6050_accel_sensitivity);
+    sprintf (buffer, "Set mpu6050_accel_sensitivity to %d\0", config_this->mpu6050_accel_sensitivity);
     success = true;
   }
   else if (!strcmp(parameter, "mpu6050_accel_range")) { 
     mpu6050.accel_range = atoi(value);
     mpu6050_set_accel_range (mpu6050.accel_range);
-    sprintf (buffer, "Set mpu6050_accel_range to %d", mpu6050.accel_range);
+    sprintf (buffer, "Set mpu6050_accel_range to %d\0", mpu6050.accel_range);
     success = true;
   }
   else if (!strcmp(parameter, "mpu6050_gyro_range")) { 
     mpu6050.gyro_range = atoi(value);
     mpu6050_set_gyro_range (mpu6050.gyro_range);
-    sprintf (buffer, "Set mpu6050_gyro_range to %d", mpu6050.gyro_range);
+    sprintf (buffer, "Set mpu6050_gyro_range to %d\0", mpu6050.gyro_range);
     success = true;
   }
   else if (!strcmp(parameter, "radio_enabled")) { 
     tm_this->radio_enabled = atoi(value);
-    sprintf (buffer, "Set radio_enabled to %s", tm_this->radio_enabled?"true":"false");
+    sprintf (buffer, "Set radio_enabled to %s\0", tm_this->radio_enabled?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "pressure_enabled")) { 
     tm_this->pressure_enabled = atoi(value);
-    sprintf (buffer, "Set pressure_enabled to %s", tm_this->pressure_enabled?"true":"false");
+    sprintf (buffer, "Set pressure_enabled to %s\0", tm_this->pressure_enabled?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "motion_enabled")) { 
     tm_this->motion_enabled = atoi(value);
-    sprintf (buffer, "Set motion_enabled to %s", tm_this->motion_enabled?"true":"false");
+    sprintf (buffer, "Set motion_enabled to %s\0", tm_this->motion_enabled?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "gps_enabled")) { 
     tm_this->gps_enabled = atoi(value);
-    sprintf (buffer, "Set gps_enabled to %s", tm_this->gps_enabled?"true":"false");
+    sprintf (buffer, "Set gps_enabled to %s\0", tm_this->gps_enabled?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "camera_enabled")) { 
     tm_this->camera_enabled = atoi(value);
-    sprintf (buffer, "Set camera_enabled to %s", tm_this->camera_enabled?"true":"false");
+    sprintf (buffer, "Set camera_enabled to %s\0", tm_this->camera_enabled?"true":"false");
     success = true;
   }
   else if (!strcmp(parameter, "wifi_udp_enabled")) { 
     tm_this->wifi_udp_enabled = atoi(value);
-    sprintf (buffer, "Set wifi_udp_enabled to %s", tm_this->wifi_udp_enabled?"true":"false");
+    sprintf (buffer, "Set wifi_udp_enabled to %s\0", tm_this->wifi_udp_enabled?"true":"false");
     success = true;
   }
   else if (!strcmp(parameter, "wifi_yamcs_enabled")) { 
     tm_this->wifi_yamcs_enabled = atoi(value);
-    sprintf (buffer, "Set wifi_yamcs_enabled to %s", tm_this->wifi_yamcs_enabled?"true":"false");
+    sprintf (buffer, "Set wifi_yamcs_enabled to %s\0", tm_this->wifi_yamcs_enabled?"true":"false");
     success = true;
   }
   #endif
   #ifdef PLATFORM_ESP32CAM
   else if (!strcmp(parameter, "sd_enable")) { 
     config_this->sd_enable = atoi(value);
-    sprintf (buffer, "Set sd_enable to %s", config_this->sd_enable?"true":"false");
+    sprintf (buffer, "Set sd_enable to %s\0", config_this->sd_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "sd_json_enable")) { 
     config_this->sd_json_enable = atoi(value);
-    sprintf (buffer, "Set sd_json_enable to %s", config_this->sd_json_enable?"true":"false");
+    sprintf (buffer, "Set sd_json_enable to %s\0", config_this->sd_json_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "sd_ccsds_enable")) { 
     config_this->sd_ccsds_enable = atoi(value);
-    sprintf (buffer, "Set sd_ccsds_enable to %s", config_this->sd_ccsds_enable?"true":"false");
+    sprintf (buffer, "Set sd_ccsds_enable to %s\0", config_this->sd_ccsds_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "sd_image_enable")) { 
     config_this->sd_image_enable = atoi(value);
-    sprintf (buffer, "Set sd_image_enable to %s", config_this->sd_image_enable?"true":"false");
+    sprintf (buffer, "Set sd_image_enable to %s\0", config_this->sd_image_enable?"true":"false");
     success = true;
   }  
   #endif
+  publish_udp_text (buffer);
   return (success);
 }
 
@@ -946,7 +932,7 @@ bool wifi_check () {
 }
 
 bool ntp_check () {
-  if (timeClient.update()) {
+  if (timeClient.update() and !tm_this->time_set) {
     sprintf (buffer, "Time on %s set via NTP server %s: %s", subsystemName[SS_THIS], config_network.ntp_server, timeClient.getFormattedDate().c_str());
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
     tm_this->time_set = true;
@@ -999,6 +985,7 @@ void publish_packet (ccsds_t* ccsds_ptr) {
     start_millis = millis();
     publish_yamcs (ccsds_ptr);
     timer_this->publish_yamcs_duration += millis() - start_millis;
+    
   }
   // UDP
   if (routing_udp[PID] and config_this->wifi_enable and config_this->wifi_udp_enable) {
@@ -1194,14 +1181,16 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
       // publish real-time
       switch ((uint8_t)config_this->serial_format) {
         case ENC_JSON:  build_json_str ((char*)&buffer, ccsds_ptr);
-                        serialTransfer.txObj(buffer, 0);
-                        serialTransfer.sendData(strlen(buffer));
+        	        serialTransfer.sendDatum(buffer, strlen(buffer));
+                        publish_udp_text("DEBUG: sent real-time JSON packet over serial");
+                        publish_udp_text(buffer);
                         break;
-        case ENC_CCSDS: serialTransfer.txObj((const uint8_t*)ccsds_ptr, 0);
-                        serialTransfer.sendData(get_ccsds_packet_len(ccsds_ptr));
+        case ENC_CCSDS: serialTransfer.sendDatum((const uint8_t*)ccsds_ptr, get_ccsds_packet_len(ccsds_ptr));
+                        publish_udp_text("DEBUG: sent real-time CCSDS packet over serial");
                         break;
       }
       tm_this->serial_out_rate++;
+      var_timer.last_serial_out_millis = millis();
       return true; 
     }
     else {
@@ -1222,11 +1211,12 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
             // good packet recovered from buffer, publish
             switch ((uint8_t)config_this->serial_format) {
               case ENC_JSON:  build_json_str ((char*)&buffer, &replayed_ccsds);
-                              serialTransfer.txObj(buffer, 0);
-                              serialTransfer.sendData(strlen(buffer));
+                              serialTransfer.sendDatum(buffer, strlen(buffer));
+                              publish_udp_text("DEBUG: sent replayed JSON packet over serial");
+                              publish_udp_text(buffer);
                               break;
-              case ENC_CCSDS: serialTransfer.txObj((const uint8_t*)&replayed_ccsds, 0);
-                              serialTransfer.sendData(get_ccsds_packet_len(&replayed_ccsds));
+              case ENC_CCSDS: serialTransfer.sendDatum((const uint8_t*)&replayed_ccsds, get_ccsds_packet_len(&replayed_ccsds));
+                              publish_udp_text("DEBUG: sent replayed CCSDS packet over serial");
                               break;
             }            
             tm_this->serial_out_rate++;          
@@ -1234,7 +1224,7 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
           else {
             // archive corruption
             tm_this->err_serial_dataloss = true;            
-            sprintf (buffer, "Got invalid CCSDS packet when reading packet from fs");
+            sprintf (buffer, "Got invalid CCSDS packet when reading packet from buffer");
             publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);             
           }
           free (serial_out_buffer_entry);
@@ -1348,7 +1338,7 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
 
 bool publish_udp (ccsds_t* ccsds_ptr) { 
   uint16_t PID = get_ccsds_apid (ccsds_ptr) - 42;
-  if (tm_this->wifi_connected) {     
+  if (tm_this->wifi_connected) { // TODO: and publish_udp_enabled???
     build_json_str ((char*)&buffer, ccsds_ptr);
     wifiUDP.beginPacket(config_network.udp_server, config_network.udp_port);
     wifiUDP.println (buffer);
@@ -1362,7 +1352,7 @@ bool publish_udp (ccsds_t* ccsds_ptr) {
 }
 
 bool publish_udp_text (const char* message) { 
-  if (tm_this->wifi_connected) {
+  if (tm_this->wifi_connected) { // TODO: and publish_udp_enabled???
     wifiUDP.beginPacket(config_network.udp_server, config_network.udp_port);
     wifiUDP.println (message);
     wifiUDP.endPacket();   
@@ -1428,16 +1418,16 @@ uint16_t update_packet (ccsds_t* ccsds_ptr) {
                          esp32.mem_free = ESP.getFreeHeap()/1024;
                          esp32.fs_free = fs_free ();
                          // compensate for this packet being prepared before it is actually sent (anticipating a successful send)
-                         if (routing_fs[TM_ESP32] and config_this->fs_enable) {
-                           esp32.fs_rate++;
+                         if (routing_fs[TM_ESP32] and tm_this->fs_enabled) {
+                           //esp32.fs_rate++; // TODO: understand why
                          }
                          if (routing_serial[TM_ESP32]) {
-                           //esp32.serial_out_rate++;
+                           //esp32.serial_out_rate++; // TODO: understand why
                          }
                          if (routing_yamcs[TM_ESP32] and config_this->wifi_enable and config_this->wifi_yamcs_enable) {
                            esp32.yamcs_rate++;
                          }
-                         if (routing_udp[TM_ESP32] and config_this->wifi_enable and config_this->wifi_udp_enable) {
+                         if (routing_udp[TM_ESP32] and tm_this->wifi_enabled and tm_this->wifi_udp_enabled) {
                            esp32.udp_rate++;
                          }
                          break;             
@@ -1500,7 +1490,7 @@ uint16_t update_packet (ccsds_t* ccsds_ptr) {
                          esp32cam.fs_free = fs_free();
                          esp32cam.sd_free = sd_free();
                          // compensate for this packet being prepared before it is actually sent (anticipating a successful send)
-                         if (routing_fs[TM_ESP32CAM] and config_this->fs_enable) {
+                         if (routing_fs[TM_ESP32CAM] and tm_this->fs_enabled) {
                            esp32cam.fs_rate++;
                          }
                          if (routing_serial[TM_ESP32CAM]) {
@@ -1509,13 +1499,13 @@ uint16_t update_packet (ccsds_t* ccsds_ptr) {
                          if (routing_yamcs[TM_ESP32CAM] and config_this->wifi_enable and config_this->wifi_yamcs_enable) {
                            esp32cam.yamcs_rate++;
                          }
-                         if (routing_udp[TM_ESP32CAM] and config_this->wifi_enable and config_this->wifi_udp_enable) {
+                         if (routing_udp[TM_ESP32CAM] and tm_this->wifi_enabled and tm_this->wifi_udp_enabled) {
                            esp32cam.udp_rate++;
                          }
-                         if (routing_sd_json[TM_ESP32CAM] and tm_this->sd_enabled and config_this->sd_json_enable) {
+                         if (routing_sd_json[TM_ESP32CAM] and tm_this->sd_enabled and tm_this->sd_json_enabled) {
                            esp32cam.sd_json_rate++;
                          }
-                         if (routing_sd_ccsds[TM_ESP32CAM] and tm_this->sd_enabled and config_this->sd_ccsds_enable) {
+                         if (routing_sd_ccsds[TM_ESP32CAM] and tm_this->sd_enabled and tm_this->sd_ccsds_enabled) {
                            esp32cam.sd_ccsds_rate++;
                          }
                          break;     
@@ -1558,6 +1548,7 @@ void reset_packet (ccsds_t* ccsds_ptr) {
                          esp32.camera_active = false;
                          esp32.fs_active = false;
                          esp32.ftp_active = false;
+                         esp32.buffer_active = false;
                          esp32.ota_enabled = false;
                          break;
     case TM_GPS:         esp32.gps_rate++;
@@ -1614,7 +1605,8 @@ void reset_packet (ccsds_t* ccsds_ptr) {
                          esp32cam.camera_active = false;
                          esp32cam.fs_active = false;
                          esp32cam.sd_active = false;
-                         esp32cam.ftp_active = false; 
+                         esp32cam.ftp_active = false;
+                         esp32cam.buffer_active = false; 
                          break;
     case TM_CAMERA:      strcpy (ov2640.filename, "");
                          ov2640.filesize = 0;
@@ -1956,8 +1948,8 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                            *json_buffer++ = '}';
                            *json_buffer++ = 0;
                          } 
-                         break;  
-  }
+                         break;   
+  } 
 }
 
 bool parse_json (const char* json_string) {
@@ -2364,49 +2356,61 @@ bool parse_json (const char* json_string) {
 
 bool serial_setup () {
   Serial.begin (SERIAL_BAUD);
+  Serial.setRxBufferSize(128);
+  Serial1.setRxBufferSize(128);
+  Serial2.setRxBufferSize(128);
   Serial.setDebugOutput (false);
   serialTransfer.begin(Serial);
 }
 
 void serial_keepalive () {
-  if (!config_this->debug_over_serial and timer_this->millis - var_timer.last_serial_out_millis > KEEPALIVE_INTERVAL) {
+  if (millis() - var_timer.last_serial_out_millis > KEEPALIVE_INTERVAL) {
     if (tm_this->serial_connected) {
-      serialTransfer.txObj("O", 0);
-      serialTransfer.sendData(1);
+      serialTransfer.sendDatum("O", 1);
+      publish_udp_text("DEBUG: Sent over serial: [O]");
     }
     else {
-      serialTransfer.txObj("o", 0);
-      serialTransfer.sendData(1);
+      serialTransfer.sendDatum("o", 1);
+      publish_udp_text("DEBUG: Sent over serial: [o]");
     }
     var_timer.last_serial_out_millis = millis();
   }
-  if (!config_this->debug_over_serial and tm_this->serial_connected and millis()-var_timer.last_serial_in_millis > 2*KEEPALIVE_INTERVAL) {
+  if (tm_this->serial_connected and millis()-var_timer.last_serial_in_millis > 2*KEEPALIVE_INTERVAL) {
     tm_this->serial_connected = false;
     tm_this->warn_serial_connloss = true;
   }
 }
 
 bool serial_check () {
+  static uint8_t serial_len;
   if (serialTransfer.available()) {
-    serialTransfer.rxObj(serial_in_buffer, 0);
+    serial_len = serialTransfer.rxObj(serial_in_buffer);
+    serial_in_buffer[serial_len] = '\0';
     tm_this->serial_in_rate++;
+    tm_this->serial_connected = true;
+    var_timer.last_serial_in_millis = millis();
+    sprintf (buffer, "DEBUG: Received over serial: [%s]\0", serial_in_buffer);
+    publish_udp_text(buffer);
     return true;
   }
   return false;
 }
 
 void serial_parse () {
-  if (serial_in_buffer[0] == '[') {
+  if (serial_in_buffer[0] == '{') {
     // JSON formatted message
+    publish_udp_text("DEBUG: Parsing JSON message");
+    publish_udp_text(serial_in_buffer);
     parse_json ((char*)&serial_in_buffer);
   }
   else if (serial_in_buffer[0] == 0x00 or serial_in_buffer[0] == 0x01) {
     // CCSDS formatted message
+    publish_udp_text("DEBUG: Parsing CCSDS message");
     parse_ccsds ((ccsds_t*)&serial_in_buffer);
   }
   else {
     // generic ASCII string: likely debug information
-    publish_udp_text (serial_in_buffer);
+    publish_udp_text("DEBUG: Message identified as ASCII");
   }
 }
 

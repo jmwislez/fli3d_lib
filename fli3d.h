@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-07-25
+ * version: 2022-08-01
  */
  
 #ifndef _FLI3D_H_
@@ -374,7 +374,7 @@ struct __attribute__ ((packed)) tm_camera_t { // APID: 46 (2e)
   uint8_t     wifi_ms; 
   uint8_t     sd_ms;
   uint8_t     exposure_ms;
-  char        filename[26]; 
+  char        filename[30]; 
 };
 
 struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
@@ -607,7 +607,6 @@ struct __attribute__ ((packed)) config_esp32_t {
   bool        fs_enable:1;
   bool        ftp_enable:1;
   bool        serial_format:1;         
-  bool        debug_over_serial:1;     
   bool        ota_enable:1;
   bool        motion_udp_raw_enable:1;
   bool        gps_udp_raw_enable:1;
@@ -632,7 +631,6 @@ struct __attribute__ ((packed)) config_esp32cam_t {
   bool        sd_ccsds_enable:1;       
   bool        sd_image_enable:1;  
   bool        serial_format:1;         
-  bool        debug_over_serial:1;
 };
 
 struct __attribute__ ((packed)) var_timer_t {
