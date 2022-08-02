@@ -62,6 +62,21 @@ The following other libraries need to be installed:
     //#define GPS_FIX_TIME_ERR
     //#define GPS_FIX_GEOID_HEIGHT
     ```
+    In ```NMEAGPS_cfg.h```, ensure the following configuration:
+    ```c++
+    #define NMEAGPS_PARSE_GGA
+    #define NMEAGPS_PARSE_GLL
+    #define NMEAGPS_PARSE_GSA
+    #define NMEAGPS_PARSE_GSV
+    #define NMEAGPS_PARSE_GST
+    #define NMEAGPS_PARSE_RMC
+    #define NMEAGPS_PARSE_VTG
+    #define NMEAGPS_PARSE_ZDA
+    
+    #define LAST_SENTENCE_IN_INTERVAL NMEAGPS::NMEA_GSV
+    
+    #define NMEAGPS_PARSING_SCRATCHPAD
+    ```
   - ESPFtpServer (https://github.com/jmwislez/ESPFtpServer)
   
 ## Configure library
