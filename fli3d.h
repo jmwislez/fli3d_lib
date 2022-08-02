@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-08-01
+ * version: 2022-08-02
  */
  
 #ifndef _FLI3D_H_
@@ -14,6 +14,8 @@
 #endif
 
 //#define ASYNCUDP // uncomment to use AsyncUDP for commanding
+//#define SERIAL_TCTM
+//#define SERIAL_KEEPALIVE_OVERRIDE
 
 #ifndef PLATFORM_ESP8266_RADIO
 
@@ -339,7 +341,7 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool        fs_enabled:1;            // 7 
   bool        sd_enabled:1;            //  6 
   bool        ftp_enabled:1;           //   5      
-  bool        free_24:1;               //    4 - free to assign
+  bool        ota_enabled:1;           //    4
   bool        sd_image_enabled:1;      //     3
   bool        sd_json_enabled:1;       //      2
   bool        sd_ccsds_enabled:1;      //       1 
@@ -357,7 +359,7 @@ struct __attribute__ ((packed)) tm_esp32cam_t { // APID: 45 (2d)
   bool        sd_active:1;             //   5
   bool        ftp_active:1;            //    4
   bool        buffer_active:1;         //     3
-  bool        free_42:1;               //      2 - free to assign  
+  bool        http_active:1;           //      2  
   bool        free_41:1;               //       1 - free to assign 
   bool        free_40:1;               //        0 - free to assign 
 };
@@ -547,6 +549,7 @@ struct __attribute__ ((packed)) timer_esp32cam_t { // APID: 52 (34)  // TODO: fi
   uint16_t    publish_serial_duration;
   uint16_t    publish_yamcs_duration;
   uint16_t    publish_udp_duration;
+  uint16_t    ota_duration;
 };
 
 struct __attribute__ ((packed)) tc_esp32_t { // APID: 53 (35)
@@ -617,6 +620,7 @@ struct __attribute__ ((packed)) config_esp32cam_t {
   char        routing_file[20];
   uint8_t     buffer_fs:2;
   uint8_t     ftp_fs:2;
+  uint8_t     camera_rate:4;
   bool        wifi_enable:1;           
   bool        wifi_sta_enable:1;       
   bool        wifi_ap_enable:1;     
@@ -627,6 +631,7 @@ struct __attribute__ ((packed)) config_esp32cam_t {
   bool        fs_enable:1;
   bool        sd_enable:1;
   bool        ftp_enable:1;
+  bool        ota_enable:1;
   bool        sd_json_enable:1;        
   bool        sd_ccsds_enable:1;       
   bool        sd_image_enable:1;  
@@ -639,6 +644,7 @@ struct __attribute__ ((packed)) var_timer_t {
   uint32_t    next_pressure_time;
   uint32_t    next_motion_time;
   uint32_t    next_gps_time;
+  uint32_t    next_camera_time;
   uint32_t    next_wifi_time;
   uint32_t    next_ntp_time;
   uint32_t    last_serial_in_millis;
@@ -647,10 +653,12 @@ struct __attribute__ ((packed)) var_timer_t {
   uint16_t    pressure_interval;
   uint16_t    motion_interval;
   uint16_t    gps_interval;
+  uint16_t    camera_interval;
   bool        do_radio:1;
   bool        do_pressure:1;
   bool        do_motion:1;
   bool        do_gps:1; 
+  bool        do_camera:1;
   bool        do_time:1;
   bool        do_wifi:1;
   bool        do_ntp:1;
