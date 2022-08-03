@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-08-02
+ * version: 2022-08-03
  */
  
 #ifndef _FLI3D_H_

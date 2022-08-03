@@ -1,6 +1,6 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-08-02
+ * version: 2022-08-03
  */
 
 #ifndef PLATFORM_ESP8266_RADIO
@@ -36,7 +36,7 @@ char today_dir[16] = "/";
 
 #ifdef PLATFORM_ESP32
 extern void ota_setup ();
-extern void gps_set_samplerate (uint8_t rate);
+extern void set_gps_samplerate (uint8_t rate);
 extern void motion_set_samplerate (uint8_t rate);
 extern void mpu6050_set_accel_range (uint8_t accel_range);
 extern void mpu6050_set_gyro_range (uint8_t gyro_range);
@@ -729,7 +729,7 @@ bool set_parameter (const char* parameter, const char* value) {
      if (config_this->gps_rate) {
       var_timer.gps_interval = (1000 / config_this->gps_rate);
       if (esp32.gps_enabled) {
-        gps_set_samplerate (config_this->gps_rate);
+        set_gps_samplerate (config_this->gps_rate);
       }
       sprintf (buffer, "Set gps_rate to %u Hz", config_this->gps_rate); 
     }
@@ -891,8 +891,11 @@ bool wifi_setup () {
     tm_this->wifi_enabled = true;
   }
   if (config_this->wifi_yamcs_enable) {
+    sprintf (buffer, "Sending CCSDS telemetry to UDP port %s:%u", config_network.yamcs_server, config_network.yamcs_tm_port);
+    publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
     return_wifi_yamcs = yamcs_tc_setup ();
   }
+  
   return (return_wifi_ap and return_wifi_sta and return_wifi_yamcs);
 }
 
@@ -2376,8 +2379,6 @@ bool parse_json (const char* json_string) {
 bool serial_setup () {
   Serial.begin (SERIAL_BAUD);
   //Serial.setRxBufferSize(128);
-  //Serial1.setRxBufferSize(128);
-  //Serial2.setRxBufferSize(128);
   #ifdef SERIAL_TCTM
   Serial.setDebugOutput (false);
   serialTransfer.begin(Serial);
