@@ -1,10 +1,10 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-08-03
  */
  
 #ifndef _FLI3D_H_
 #define _FLI3D_H_
+#define LIB_VERSION "1.0.0/20220804"
 
 #ifdef ARDUINO_MH_ET_LIVE_ESP32MINIKIT
 #define PLATFORM_ESP32
@@ -555,15 +555,13 @@ struct __attribute__ ((packed)) timer_esp32cam_t { // APID: 52 (34)  // TODO: fi
 struct __attribute__ ((packed)) tc_esp32_t { // APID: 53 (35)
   ccsds_hdr_t ccsds_hdr;
   uint8_t     cmd_id;
-  uint8_t     int_parameter;
-  char        str_parameter[JSON_MAX_SIZE];
+  char        parameter[JSON_MAX_SIZE];
 }; 
 
 struct __attribute__ ((packed)) tc_esp32cam_t { // APID: 54 (36)
   ccsds_hdr_t ccsds_hdr;
   uint8_t     cmd_id;
-  uint8_t     int_parameter;
-  char        str_parameter[JSON_MAX_SIZE];
+  char        parameter[JSON_MAX_SIZE];
 }; 
 
 struct __attribute__ ((packed)) config_network_t {
@@ -786,8 +784,8 @@ extern void serial_parse ();
 // COMMANDS
 extern bool cmd_reboot (uint8_t subsystem);
 extern bool cmd_set_opsmode (uint8_t opsmode);
-extern bool cmd_load_config (uint8_t filesystem, const char* filename);
-extern bool cmd_load_routing (uint8_t filesystem, const char* filename);
+extern bool cmd_load_config (const char* filename);
+extern bool cmd_load_routing (const char* filename);
 extern bool cmd_set_parameter (const char* parameter, const char* value);
 extern bool cmd_toggle_routing (uint16_t PID, const char interface);
 

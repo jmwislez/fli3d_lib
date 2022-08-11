@@ -1,6 +1,5 @@
 /*
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
- * version: 2022-08-03
  */
 
 #ifndef PLATFORM_ESP8266_RADIO
@@ -1602,7 +1601,7 @@ void reset_packet (ccsds_t* ccsds_ptr) {
                          timer_esp32.publish_yamcs_duration = 0;
                          timer_esp32.publish_udp_duration = 0;
                          break;    
-    case TC_ESP32CAM:    tc_esp32cam.str_parameter[0] = 0;
+    case TC_ESP32CAM:    tc_esp32cam.parameter[0] = 0;
                          break;
     #endif
     #ifdef PLATFORM_ESP32CAM
@@ -1652,7 +1651,7 @@ void reset_packet (ccsds_t* ccsds_ptr) {
                          timer_esp32cam.publish_yamcs_duration = 0;
                          timer_esp32cam.publish_udp_duration = 0;
                          break;                     
-    case TC_ESP32:       tc_esp32.str_parameter[0] = 0;
+    case TC_ESP32:       tc_esp32.parameter[0] = 0;
                          break;
     #endif
   }
@@ -1768,18 +1767,18 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
   else if (valid_ccsds_hdr (ccsds_ptr, PKT_TC)) {
     switch (get_ccsds_apid (ccsds_ptr) - 42) {
       case TC_THIS:        memcpy (tc_this, ccsds_ptr, get_ccsds_packet_len(ccsds_ptr)+6);
-                           sprintf (buffer, "Received TC for %s with cmd_id %u (%s), parameters [%u][%s]", subsystemName[SS_THIS], tc_this->cmd_id, tcName[tc_this->cmd_id-42], tc_this->int_parameter, (const char*)tc_this->str_parameter);
+                           sprintf (buffer, "Received TC for %s with cmd_id %u (%s), parameter [%s]", subsystemName[SS_THIS], tc_this->cmd_id, tcName[tc_this->cmd_id-42], (const char*)tc_this->parameter);
                            publish_event (STS_THIS, SS_THIS, EVENT_CMD_ACK, buffer);
                            switch (tc_this->cmd_id) {
-                             case TC_REBOOT:             cmd_reboot (tc_this->int_parameter);
+                             case TC_REBOOT:             cmd_reboot ((uint8_t)tc_this->parameter[0]);
                                                          break;
-                             case TC_SET_OPSMODE:        cmd_set_opsmode (tc_this->int_parameter);
+                             case TC_SET_OPSMODE:        cmd_set_opsmode ((uint8_t)tc_this->parameter[0]);
                                                          break;
-                             case TC_LOAD_CONFIG:        cmd_load_config (tc_this->int_parameter, (const char*)tc_this->str_parameter);
+                             case TC_LOAD_CONFIG:        cmd_load_config ((const char*)tc_this->parameter);
                                                          break;                                                       
-                             case TC_LOAD_ROUTING:       cmd_load_routing (tc_this->int_parameter, (const char*)tc_this->str_parameter); 
+                             case TC_LOAD_ROUTING:       cmd_load_routing ((const char*)tc_this->parameter); 
                                                          break;
-                             case TC_SET_PARAMETER:      cmd_set_parameter (tc_this->str_parameter, (char*)(tc_this->str_parameter + strlen(tc_this->str_parameter) + 1)); 
+                             case TC_SET_PARAMETER:      cmd_set_parameter (tc_this->parameter, (char*)(tc_this->parameter + strlen(tc_this->parameter) + 1)); 
                                                          break;
                              default:                    sprintf (buffer,  "CCSDS command to %s not understood", subsystemName[SS_THIS]);
                                                          publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
@@ -1941,13 +1940,13 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                            *json_buffer++ = '{';
                            json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32_ptr->cmd_id-42]);
                            if (tc_esp32_ptr->cmd_id-42 == TC_REBOOT or tc_esp32_ptr->cmd_id-42 == TC_SET_OPSMODE) {
-                             json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", tc_esp32_ptr->int_parameter);
+                             json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", (uint8_t)tc_esp32_ptr->parameter[0]);
                            }
                            if (tc_esp32_ptr->cmd_id-42 == TC_LOAD_CONFIG or tc_esp32_ptr->cmd_id-42 == TC_LOAD_ROUTING) {
-                             json_buffer += sprintf (json_buffer, ",\"str_val\":\"%s\"", tc_esp32_ptr->str_parameter);
+                             json_buffer += sprintf (json_buffer, ",\"str_val\":\"%s\"", tc_esp32_ptr->parameter);
                            }
                            if (tc_esp32_ptr->cmd_id-42 == TC_SET_PARAMETER) {
-                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32_ptr->str_parameter, (char*)(&tc_esp32_ptr->str_parameter+strlen(tc_esp32_ptr->str_parameter)+1)); // TODO: value
+                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32_ptr->parameter, (char*)(&tc_esp32_ptr->parameter+strlen(tc_esp32_ptr->parameter)+1)); // TODO: value
                            }
                            *json_buffer++ = '}';
                            *json_buffer++ = 0;
@@ -1958,13 +1957,13 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                            *json_buffer++ = '{';
                            json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32cam_ptr->cmd_id-42]);
                            if (tc_esp32cam_ptr->cmd_id-42 == TC_REBOOT or tc_esp32cam_ptr->cmd_id-42 == TC_SET_OPSMODE) {
-                             json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", tc_esp32cam_ptr->int_parameter);
+                             json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", (uint8_t)tc_esp32cam_ptr->parameter[0]);
                            }
                            if (tc_esp32cam_ptr->cmd_id-42 == TC_LOAD_CONFIG or tc_esp32cam_ptr->cmd_id-42 == TC_LOAD_ROUTING) {
-                             json_buffer += sprintf (json_buffer, ",\"str_val\":\"%s\"", tc_esp32cam_ptr->str_parameter);
+                             json_buffer += sprintf (json_buffer, ",\"str_val\":\"%s\"", tc_esp32cam_ptr->parameter);
                            }
                            if (tc_esp32cam_ptr->cmd_id-42 == TC_SET_PARAMETER) {
-                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32cam_ptr->str_parameter, tc_esp32cam_ptr->str_parameter); // TODO: value
+                             json_buffer += sprintf (json_buffer, ",\"param\":\"%s\",\"value\":\"%s\"", tc_esp32cam_ptr->parameter, tc_esp32cam_ptr->parameter); // TODO: value
                            }
                            *json_buffer++ = '}';
                            *json_buffer++ = 0;
@@ -2081,11 +2080,11 @@ bool parse_json (const char* json_string) {
                         }
                         else if (!strcmp(obj["cmd"], "load_config")) {
                           // {"cmd":"load_config","filename":"xxxxxx.cfg"}
-                          cmd_load_config (obj["fs"], obj["filename"]);
+                          cmd_load_config (obj["filename"]);
                         }
                         else if (!strcmp(obj["cmd"], "load_routing")) {
                           // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
-                          cmd_load_routing (obj["fs"], obj["filename"]);
+                          cmd_load_routing (obj["filename"]);
                         }
                         else if (!strcmp(obj["cmd"], "set_parameter")) {
                           // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
@@ -2100,25 +2099,22 @@ bool parse_json (const char* json_string) {
                         tc_esp32cam.cmd_id = id_of (obj["cmd"], sizeof(tcName[0]), (char*)tcName, sizeof(tcName));
                         switch (tc_esp32cam.cmd_id) {
                           case TC_REBOOT:        // {"cmd":"reboot","subsystem":0|1|2}
-                                                 tc_esp32cam.int_parameter = atoi (obj["subsystem"]);
-                                                 tc_esp32cam.str_parameter[0] = 0;
+                                                 tc_esp32cam.parameter[0] = (char) atoi (obj["subsystem"]);
+                                                 tc_esp32cam.parameter[1] = 0;
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, 7);
                                                  break;
                           case TC_LOAD_CONFIG:   // {"cmd":"load_config","filename":"xxxxxx.cfg"}
-                                                 tc_esp32cam.int_parameter = 0;
-                                                 strcpy (tc_esp32cam.str_parameter, obj["filename"]);
-                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, strlen (tc_esp32cam.str_parameter) + 7);
+                                                 strcpy (tc_esp32cam.parameter, obj["filename"]);
+                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, strlen (tc_esp32cam.parameter) + 7);
                                                  break;
                           case TC_LOAD_ROUTING:  // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
-                                                 tc_esp32cam.int_parameter = 0;
-                                                 strcpy (tc_esp32cam.str_parameter, obj["filename"]);
-                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, strlen (tc_esp32cam.str_parameter) + 7);
+                                                 strcpy (tc_esp32cam.parameter, obj["filename"]);
+                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, strlen (tc_esp32cam.parameter) + 7);
                                                  break;
                           case TC_SET_PARAMETER: // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
-                                                 tc_esp32cam.int_parameter = 0;
-                                                 strcpy ((char*)&tc_esp32cam.str_parameter, obj["parameter"]);
-                                                 tc_esp32cam.str_parameter[strlen (obj["parameter"])] = 0;
-                                                 strcpy ((char*)(&tc_esp32cam.str_parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
+                                                 strcpy ((char*)&tc_esp32cam.parameter, obj["parameter"]);
+                                                 tc_esp32cam.parameter[strlen (obj["parameter"])] = 0;
+                                                 strcpy ((char*)(&tc_esp32cam.parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32CAM not understood");
@@ -2308,30 +2304,27 @@ bool parse_json (const char* json_string) {
                         tc_esp32.cmd_id = id_of (obj["cmd"], sizeof(tcName[0]), (char*)tcName, sizeof(tcName));
                         switch (tc_esp32.cmd_id) {
                           case TC_REBOOT:        // {"cmd":"reboot","subsystem":0|1|2}
-                                                 tc_esp32.int_parameter = obj["subsystem"];
-                                                 tc_esp32.str_parameter[0] = 0;
+                                                 tc_esp32.parameter[0] = (char)obj["subsystem"];
+                                                 tc_esp32.parameter[1] = 0;
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, 7);
                                                  break;
                           case TC_SET_OPSMODE:   // {"cmd":"set_opsmode","opsmode":"checkout|ready|static"}
-                                                 tc_esp32.int_parameter = id_of (obj["opsmode"], sizeof(modeName[0]), (char*)modeName, sizeof(modeName));
-                                                 tc_esp32.str_parameter[0] = 0;
+                                                 tc_esp32.parameter[0] = (char)id_of (obj["opsmode"], sizeof(modeName[0]), (char*)modeName, sizeof(modeName));
+                                                 tc_esp32.parameter[1] = 0;
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, 7);
                                                  break;
                           case TC_LOAD_CONFIG:   // {"cmd":"load_config","filename":"xxxxxx.cfg"}
-                                                 tc_esp32.int_parameter = 0;
-                                                 strcpy (tc_esp32.str_parameter, obj["filename"]);
-                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32, strlen (tc_esp32.str_parameter) + 7);
+                                                 strcpy (tc_esp32.parameter, obj["filename"]);
+                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32, strlen (tc_esp32.parameter) + 7);
                                                  break;
                           case TC_LOAD_ROUTING:  // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
-                                                 tc_esp32.int_parameter = 0;
-                                                 strcpy (tc_esp32.str_parameter, obj["filename"]);
-                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32, strlen (tc_esp32.str_parameter) + 7);
+                                                 strcpy (tc_esp32.parameter, obj["filename"]);
+                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32, strlen (tc_esp32.parameter) + 7);
                                                  break;
                           case TC_SET_PARAMETER: // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
-                                                 tc_esp32.int_parameter = 0;
-                                                 strcpy ((char*)&tc_esp32.str_parameter, obj["parameter"]);
-                                                 tc_esp32.str_parameter[strlen (obj["parameter"])] = 0;
-                                                 strcpy ((char*)(&tc_esp32.str_parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
+                                                 strcpy ((char*)&tc_esp32.parameter, obj["parameter"]);
+                                                 tc_esp32.parameter[strlen (obj["parameter"])] = 0;
+                                                 strcpy ((char*)(&tc_esp32.parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32 not understood");
@@ -2351,11 +2344,11 @@ bool parse_json (const char* json_string) {
                         }
                         else if (!strcmp(obj["cmd"], "load_config")) {
                           // {"cmd":"load_config","filename":"xxxxxx.cfg"}
-                          cmd_load_config (obj["fs"], obj["filename"]);
+                          cmd_load_config (obj["filename"]);
                         }
                         else if (!strcmp(obj["cmd"], "load_routing")) {
                           // {"cmd":"load_routing","filename":"xxxxxx.cfg"}
-                          cmd_load_routing (obj["fs"], obj["filename"]);
+                          cmd_load_routing (obj["filename"]);
                         }
                         else if (!strcmp(obj["cmd"], "set_parameter")) {
                           // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
@@ -2456,15 +2449,13 @@ bool cmd_reboot (uint8_t subsystem) {
             sprintf (buffer, "Sending reboot command to %s subsystem", subsystemName[SS_OTHER]);
             publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
             tc_other->cmd_id = TC_REBOOT;
-            tc_other->int_parameter = 0;
-            tc_other->str_parameter[0] = 0;
+            tc_other->parameter[0] = 0;
             set_ccsds_payload_len ((ccsds_t*)tc_other, 7); 
             publish_packet ((ccsds_t*)tc_other);
             break;
     case 2: // both
             tc_other->cmd_id = TC_REBOOT;
-            tc_other->int_parameter = 0;
-            tc_other->str_parameter[0] = 0;
+            tc_other->parameter[0] = 0;
             set_ccsds_payload_len ((ccsds_t*)tc_other, 7); 
             publish_packet ((ccsds_t*)tc_other);
             sprintf (buffer, "Sending reboot command to %s and rebooting %s subsystem", subsystemName[SS_OTHER], subsystemName[SS_THIS]);
@@ -2505,9 +2496,9 @@ bool cmd_set_parameter (const char* parameter, const char* value) {
   }
 }
 
-bool cmd_load_config (uint8_t filesystem, const char* filename) {
+bool cmd_load_config (const char* filename) {
   if (esp32.opsmode == MODE_CHECKOUT) {
-    file_load_config (filesystem, filename);
+    file_load_config (config_this->ftp_fs, filename);
   }
   else {
     publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command only allowed in CHECKOUT mode");
@@ -2515,9 +2506,9 @@ bool cmd_load_config (uint8_t filesystem, const char* filename) {
   }  
 }
 
-bool cmd_load_routing (uint8_t filesystem, const char* filename) {
+bool cmd_load_routing (const char* filename) {
   if (esp32.opsmode == MODE_CHECKOUT) {
-    file_load_routing (filesystem, filename);
+    file_load_routing (config_this->ftp_fs, filename);
   }
   else {
     publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command only allowed in CHECKOUT mode");
