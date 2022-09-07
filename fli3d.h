@@ -4,7 +4,7 @@
  
 #ifndef _FLI3D_H_
 #define _FLI3D_H_
-#define LIB_VERSION "1.0.0/20220804"
+#define LIB_VERSION "1.1.0/20220827"
 
 #ifdef ARDUINO_MH_ET_LIVE_ESP32MINIKIT
 #define PLATFORM_ESP32
@@ -30,12 +30,14 @@
 #include <ArduinoJson.h>
 #include <ESPFtpServer.h>
 #include <FS.h>
-#include <LITTLEFS.h>
 #include <SerialTransfer.h>
+#include <LITTLEFS.h>
+
+#define SERIAL_TCTM
 
 #define SERIAL_BAUD               115200
 #define JSON_MAX_SIZE             512
-#define WIFI_TIMEOUT              120    // s (time-out when initializing)
+#define WIFI_TIMEOUT              20     // s (time-out when initializing)
 #define NTP_TIMEOUT               10     // s (time-out when initializing)
 #define WIFI_CHECK                1      // s (check interval to ensure connection, otherwise buffer)
 #define NTP_CHECK                 1      // s (check interval in background after time-out)
@@ -51,8 +53,8 @@
 #define SEP_STS_PIN               19   // IO19; 
 #define RF433_TX_PIN              26   // IO26; 
 #define DUMMY_PIN2                14   // IO14; hack: RadioHead needs a PTT pin to be set
-#define GPS_RX_PIN                16   // IO16; second serial interface on ESP32 (Serial2)
-#define GPS_TX_PIN                17   // IO17; second serial interface on ESP32 (Serial2)
+#define GPS_RX_PIN                16   // IO16; second serial interface on ESP32 (Serial1)
+#define GPS_TX_PIN                17   // IO17; second serial interface on ESP32 (Serial1)
 #define ESP32CAM_RX_PIN           3    // IO3; RX / main serial interface on ESP32 (Serial)
 #define ESP32CAM_TX_PIN           1    // IO1; TX / main serial interface on ESP32 (Serial)
 
@@ -110,10 +112,10 @@ extern const char eventName[8][9];
 // subsystem
 #define SS_ESP32               0
 #define SS_ESP32CAM            1
-#define SS_OV2640              2
-#define SS_NEO6MV2             3
-#define SS_MPU6050             4
-#define SS_BMP280              5
+#define SS_CAMERA              2
+#define SS_GPS                 3
+#define SS_MOTION              4
+#define SS_PRESSURE            5
 #define SS_RADIO               6
 #define SS_SD                  7
 #define SS_SEPARATION          8
@@ -435,6 +437,9 @@ struct __attribute__ ((packed)) tm_motion_t { // APID: 48 (30)
   int16_t     gyro_x;                  // cdeg/s
   int16_t     gyro_y;                  // cdeg/s
   int16_t     gyro_z;                  // cdeg/s
+  int16_t     magn_x;                  // uT
+  int16_t     magn_y;                  // uT
+  int16_t     magn_z;                  // uT
   int16_t     tilt;                    // cdeg
   uint16_t    g;                       // mG
   int16_t     a;                       // cm/s2
@@ -586,13 +591,13 @@ struct __attribute__ ((packed)) config_esp32_t {
   uint8_t     gps_rate;                 // Hz (valid: 1,5,10,16)
   char        config_file[20];
   char        routing_file[20];
-  int16_t     mpu6050_accel_sensitivity; // �m/s2 per LSB 
-  int16_t     mpu6050_accel_offset_x;    // y_sensor values
-  int16_t     mpu6050_accel_offset_y;    // z_sensor values
-  int16_t     mpu6050_accel_offset_z;    // x_sensor values
-  int16_t     mpu6050_gyro_offset_x;     // y_sensor values
-  int16_t     mpu6050_gyro_offset_y;     // z_sensor values
-  int16_t     mpu6050_gyro_offset_z;     // x_sensor values
+  int16_t     mpu_accel_sensitivity; // �m/s2 per LSB 
+  int16_t     mpu_accel_offset_x;    // y_sensor values
+  int16_t     mpu_accel_offset_y;    // z_sensor values
+  int16_t     mpu_accel_offset_z;    // x_sensor values
+  int16_t     mpu_gyro_offset_x;     // y_sensor values
+  int16_t     mpu_gyro_offset_y;     // z_sensor values
+  int16_t     mpu_gyro_offset_z;     // x_sensor values
   uint8_t     buffer_fs:2;
   uint8_t     ftp_fs:2;
   bool        radio_enable:1;          
@@ -675,7 +680,7 @@ extern tm_esp32_t          esp32;
 extern tm_esp32cam_t       esp32cam;
 extern tm_camera_t         ov2640;
 extern tm_gps_t            neo6mv2;
-extern tm_motion_t         mpu6050;
+extern tm_motion_t         motion;
 extern tm_pressure_t       bmp280;
 extern tm_radio_t          radio;
 extern timer_esp32_t       timer_esp32;

@@ -37,8 +37,8 @@ char today_dir[16] = "/";
 extern void ota_setup ();
 extern void set_gps_samplerate (uint8_t rate);
 extern void motion_set_samplerate (uint8_t rate);
-extern void mpu6050_set_accel_range (uint8_t accel_range);
-extern void mpu6050_set_gyro_range (uint8_t gyro_range);
+extern void mpu_set_accel_range (uint8_t accel_range);
+extern void mpu_set_gyro_range (uint8_t gyro_range);
 extern void publish_radio ();
 #endif 
 
@@ -51,7 +51,7 @@ tm_esp32_t          esp32;
 tm_esp32cam_t       esp32cam;
 tm_camera_t         ov2640;
 tm_gps_t            neo6mv2;
-tm_motion_t         mpu6050;
+tm_motion_t         motion;
 tm_pressure_t       bmp280;
 tm_radio_t          radio;
 timer_esp32_t       timer_esp32;
@@ -89,7 +89,7 @@ config_esp32cam_t   *config_this = &config_esp32cam;
 
 const char pidName[NUMBER_OF_PID][15] =   { "sts_esp32", "sts_esp32cam", "tm_esp32", "tm_esp32cam", "tm_camera", "tm_gps", "tm_motion", "tm_pressure", "tm_radio", "timer_esp32", "timer_esp32cam", "tc_esp32", "tc_esp32cam" };
 const char eventName[8][9] =              { "init", "info", "warning", "error", "cmd", "cmd_ack", "cmd_resp", "cmd_fail" };
-const char subsystemName[13][14] =        { "esp32", "esp32cam", "ov2640", "neo6mv2", "mpu6050", "bmp280", "radio", "sd", "separation", "timer", "fli3d", "ground", "any" };
+const char subsystemName[13][14] =        { "esp32", "esp32cam", "ov2640", "neo6mv2", "mpuXX50", "bmp280", "radio", "sd", "separation", "timer", "fli3d", "ground", "any" };
 const char modeName[4][10] =              { "init", "checkout", "nominal", "done" };
 const char stateName[4][10] =             { "static", "thrust", "freefall", "parachute" };
 const char cameraModeName[4][7] =         { "init", "idle", "single", "stream" };
@@ -303,19 +303,19 @@ void load_default_config () {
   config_esp32.gps_rate = 1;
   strcpy (config_esp32.config_file, "/default.cfg");
   strcpy (config_esp32.routing_file, "/default.rt");
-  config_esp32.mpu6050_accel_sensitivity = 595;
-  config_esp32.mpu6050_accel_offset_x = 0;
-  config_esp32.mpu6050_accel_offset_y = 0;
-  config_esp32.mpu6050_accel_offset_z = 0;
-  config_esp32.radio_enable = false;
-  config_esp32.pressure_enable = false;
-  config_esp32.motion_enable = false;
-  config_esp32.gps_enable = false;
+  config_esp32.mpu_accel_sensitivity = 595;
+  config_esp32.mpu_accel_offset_x = 0;
+  config_esp32.mpu_accel_offset_y = 0;
+  config_esp32.mpu_accel_offset_z = 0;
+  config_esp32.radio_enable = true;
+  config_esp32.pressure_enable = true;
+  config_esp32.motion_enable = true;
+  config_esp32.gps_enable = true;
   config_esp32.camera_enable = false;
   config_esp32.wifi_enable = true;
   config_esp32.wifi_sta_enable = true;
   config_esp32.wifi_ap_enable = true;
-  config_esp32.wifi_udp_enable = true;
+  config_esp32.wifi_udp_enable = false;
   config_esp32.wifi_yamcs_enable = true;
   config_esp32.fs_enable = true;
   config_esp32.ftp_enable = true;
@@ -325,18 +325,18 @@ void load_default_config () {
   config_esp32.ota_enable = true;
   config_esp32.motion_udp_raw_enable = false;
   config_esp32.gps_udp_raw_enable = false;
-  mpu6050.accel_range = 3;
-  mpu6050.gyro_range = 3;
+  motion.accel_range = 3;
+  motion.gyro_range = 3;
   strcpy (config_esp32cam.config_file, "/default.cfg");
   strcpy (config_esp32cam.routing_file, "/default.rt");
-  config_esp32cam.camera_rate = 1;
+  config_esp32cam.camera_rate = 2;
   config_esp32cam.wifi_enable = true;
   config_esp32cam.wifi_sta_enable = true;
   config_esp32cam.wifi_ap_enable = true;
-  config_esp32cam.wifi_udp_enable = true;
+  config_esp32cam.wifi_udp_enable = false;
   config_esp32cam.wifi_yamcs_enable = true;
   config_esp32cam.wifi_image_enable = true; 
-  config_esp32cam.camera_enable = false;
+  config_esp32cam.camera_enable = true;
   config_esp32cam.fs_enable = false;
   config_esp32cam.ftp_enable = true;
   config_esp32cam.ota_enable = true;
@@ -364,7 +364,7 @@ void load_default_config () {
   // ESP32                 *     *        *  *  *  *  *        *
   //                       -------------------------------------  
   #ifdef PLATFORM_ESP32
-  char rt_serial[40] =   " 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1 ";
+  char rt_serial[40] =   " 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ";
   char rt_yamcs[40] =    " 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0 ";
   char rt_udp[40] =      " 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ";
   char rt_fs[40] =       " 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1 ";
@@ -377,7 +377,7 @@ void load_default_config () {
   //                       0  1  2  3  4  5  6  7  8  9  A  B  C
   // ESP32CAM                 *     *  *                 *  *   
   //                       -------------------------------------  
-  char rt_serial[40] =   " 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0 ";
+  char rt_serial[40] =   " 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ";
   char rt_yamcs[40] =    " 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0 ";
   char rt_udp[40] =      " 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ";
   char rt_fs[40] =       " 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1 ";
@@ -768,36 +768,36 @@ bool set_parameter (const char* parameter, const char* value) {
     sprintf (buffer, "Set gps_udp_raw_enable to %s", config_this->gps_udp_raw_enable?"true":"false");
     success = true;
   }
-  else if (!strcmp(parameter, "mpu6050_accel_offset_x")) { 
-    config_this->mpu6050_accel_offset_x = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_x to %d", config_this->mpu6050_accel_offset_x);
+  else if (!strcmp(parameter, "mpu_accel_offset_x")) { 
+    config_this->mpu_accel_offset_x = atoi(value);
+    sprintf (buffer, "Set mpu_accel_offset_x to %d", config_this->mpu_accel_offset_x);
     success = true;
   }  
-  else if (!strcmp(parameter, "mpu6050_accel_offset_y")) { 
-    config_this->mpu6050_accel_offset_y = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_y to %d", config_this->mpu6050_accel_offset_y);
+  else if (!strcmp(parameter, "mpu_accel_offset_y")) { 
+    config_this->mpu_accel_offset_y = atoi(value);
+    sprintf (buffer, "Set mpu_accel_offset_y to %d", config_this->mpu_accel_offset_y);
     success = true;
   }  
-  else if (!strcmp(parameter, "mpu6050_accel_offset_z")) { 
-    config_this->mpu6050_accel_offset_z = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_offset_z to %d", config_this->mpu6050_accel_offset_z);
+  else if (!strcmp(parameter, "mpu_accel_offset_z")) { 
+    config_this->mpu_accel_offset_z = atoi(value);
+    sprintf (buffer, "Set mpu_accel_offset_z to %d", config_this->mpu_accel_offset_z);
     success = true;
   }
-  else if (!strcmp(parameter, "mpu6050_accel_sensitivity")) { 
-    config_this->mpu6050_accel_sensitivity = atoi(value);
-    sprintf (buffer, "Set mpu6050_accel_sensitivity to %d", config_this->mpu6050_accel_sensitivity);
+  else if (!strcmp(parameter, "mpu_accel_sensitivity")) { 
+    config_this->mpu_accel_sensitivity = atoi(value);
+    sprintf (buffer, "Set mpu_accel_sensitivity to %d", config_this->mpu_accel_sensitivity);
     success = true;
   }
-  else if (!strcmp(parameter, "mpu6050_accel_range")) { 
-    mpu6050.accel_range = atoi(value);
-    mpu6050_set_accel_range (mpu6050.accel_range);
-    sprintf (buffer, "Set mpu6050_accel_range to %d", mpu6050.accel_range);
+  else if (!strcmp(parameter, "mpu_accel_range")) { 
+    motion.accel_range = atoi(value);
+    mpu_set_accel_range (motion.accel_range);
+    sprintf (buffer, "Set mpu_accel_range to %d", motion.accel_range);
     success = true;
   }
-  else if (!strcmp(parameter, "mpu6050_gyro_range")) { 
-    mpu6050.gyro_range = atoi(value);
-    mpu6050_set_gyro_range (mpu6050.gyro_range);
-    sprintf (buffer, "Set mpu6050_gyro_range to %d", mpu6050.gyro_range);
+  else if (!strcmp(parameter, "mpu_gyro_range")) { 
+    motion.gyro_range = atoi(value);
+    mpu_set_gyro_range (motion.gyro_range);
+    sprintf (buffer, "Set mpu_gyro_range to %d", motion.gyro_range);
     success = true;
   }
   else if (!strcmp(parameter, "radio_enabled")) { 
@@ -1023,6 +1023,7 @@ void publish_packet (ccsds_t* ccsds_ptr) {
 }
 
 void publish_event (uint16_t PID, uint8_t subsystem, uint8_t event_type, const char* event_message) {
+  Serial.println(event_message);
   switch (event_type) {
     case EVENT_ERROR:    tm_this->error_ctr++; break;  
     case EVENT_WARNING:  tm_this->warning_ctr++; break;  
@@ -1415,6 +1416,7 @@ bool yamcs_tc_setup () {
 
 bool yamcs_tc_check () {
   if (wifiUDP_yamcs_tc.parsePacket()) {
+    Serial.println ("Received command");
     wifiUDP_yamcs_tc.read((char*)&ccsds_tc_buffer, JSON_MAX_SIZE);
     parse_ccsds ((ccsds_t*)&ccsds_tc_buffer);
   }
@@ -1453,7 +1455,7 @@ uint16_t update_packet (ccsds_t* ccsds_ptr) {
                          break;             
     case TM_GPS:         neo6mv2.packet_ctr++;
                          break;
-    case TM_MOTION:      mpu6050.packet_ctr++;
+    case TM_MOTION:      motion.packet_ctr++;
                          break;
     case TM_PRESSURE:    bmp280.packet_ctr++;
                          break;
@@ -1465,10 +1467,10 @@ uint16_t update_packet (ccsds_t* ccsds_ptr) {
                          radio.pressure_height = max(0, min(255, (bmp280.height+50)/100));
                          radio.pressure_velocity_v = int8_t((bmp280.velocity_v+((bmp280.velocity_v > 0) - (bmp280.velocity_v < 0))*50)/100);
                          radio.temperature = int8_t((bmp280.temperature+((bmp280.temperature > 0) - (bmp280.temperature < 0))*50)/100);
-                         radio.motion_tilt = uint8_t((mpu6050.tilt+50)/100);
-                         radio.motion_g = uint8_t((mpu6050.g+50)/100);  
-                         radio.motion_a = int8_t((mpu6050.a+((mpu6050.a > 0) - (mpu6050.a < 0))*50)/100);
-                         radio.motion_rpm = int8_t((mpu6050.rpm+((mpu6050.rpm > 0) - (mpu6050.rpm < 0))*50)/100); 
+                         radio.motion_tilt = uint8_t((motion.tilt+50)/100);
+                         radio.motion_g = uint8_t((motion.g+50)/100);  
+                         radio.motion_a = int8_t((motion.a+((motion.a > 0) - (motion.a < 0))*50)/100);
+                         radio.motion_rpm = int8_t((motion.rpm+((motion.rpm > 0) - (motion.rpm < 0))*50)/100); 
                          radio.gps_satellites = neo6mv2.satellites;
                          radio.gps_velocity_v = int8_t(-(neo6mv2.v_down+((neo6mv2.v_down > 0) - (neo6mv2.v_down < 0))*50)/100);
                          radio.gps_velocity = uint8_t(sqrt (neo6mv2.v_north*neo6mv2.v_north + neo6mv2.v_east*neo6mv2.v_east + neo6mv2.v_down*neo6mv2.v_down) / 1000000);   
@@ -1666,7 +1668,7 @@ void ccsds_init () {
   ccsds_hdr_init ((ccsds_t*)&esp32cam, TM_ESP32CAM, PKT_TM, sizeof (tm_esp32cam_t));
   ccsds_hdr_init ((ccsds_t*)&ov2640, TM_CAMERA, PKT_TM, sizeof (tm_camera_t));
   ccsds_hdr_init ((ccsds_t*)&neo6mv2, TM_GPS, PKT_TM, sizeof (tm_gps_t));
-  ccsds_hdr_init ((ccsds_t*)&mpu6050, TM_MOTION, PKT_TM, sizeof (tm_motion_t));
+  ccsds_hdr_init ((ccsds_t*)&motion, TM_MOTION, PKT_TM, sizeof (tm_motion_t));
   ccsds_hdr_init ((ccsds_t*)&bmp280, TM_PRESSURE, PKT_TM, sizeof (tm_pressure_t));
   ccsds_hdr_init ((ccsds_t*)&radio, TM_RADIO, PKT_TM, sizeof (tm_radio_t));
   ccsds_hdr_init ((ccsds_t*)&timer_esp32, TIMER_ESP32, PKT_TM, sizeof (timer_esp32_t));
@@ -1746,8 +1748,8 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
       case TM_GPS:         memcpy (&neo6mv2, ccsds_ptr, sizeof(tm_gps_t));
                            publish_packet ((ccsds_t*)&neo6mv2);
                            break;
-      case TM_MOTION:      memcpy (&mpu6050, ccsds_ptr, sizeof(tm_motion_t));
-                           publish_packet ((ccsds_t*)&mpu6050);
+      case TM_MOTION:      memcpy (&motion, ccsds_ptr, sizeof(tm_motion_t));
+                           publish_packet ((ccsds_t*)&motion);
                            break;
       case TM_PRESSURE:    memcpy (&bmp280, ccsds_ptr, sizeof(tm_pressure_t));
                            publish_packet ((ccsds_t*)&bmp280);
@@ -1892,13 +1894,13 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                          }
                          break;
     case TM_MOTION:      {
-                           tm_motion_t* mpu6050_ptr = (tm_motion_t*)ccsds_ptr;
+                           tm_motion_t* motion_ptr = (tm_motion_t*)ccsds_ptr;
                            sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}", 
-                                    pidName[PID], mpu6050_ptr->packet_ctr, mpu6050_ptr->millis, 
-                                    mpu6050_ptr->accel_x, mpu6050_ptr->accel_y, mpu6050_ptr->accel_z, 
-                                    mpu6050_ptr->gyro_x, mpu6050_ptr->gyro_y, mpu6050_ptr->gyro_z, 
-                                    mpu6050_ptr->tilt, mpu6050_ptr->g, mpu6050_ptr->a, mpu6050_ptr->rpm,
-                                    mpu6050_ptr->accel_range, mpu6050_ptr->gyro_range, mpu6050_ptr->accel_valid, mpu6050_ptr->gyro_valid); 
+                                    pidName[PID], motion_ptr->packet_ctr, motion_ptr->millis, 
+                                    motion_ptr->accel_x, motion_ptr->accel_y, motion_ptr->accel_z, 
+                                    motion_ptr->gyro_x, motion_ptr->gyro_y, motion_ptr->gyro_z, 
+                                    motion_ptr->tilt, motion_ptr->g, motion_ptr->a, motion_ptr->rpm,
+                                    motion_ptr->accel_range, motion_ptr->gyro_range, motion_ptr->accel_valid, motion_ptr->gyro_valid); 
                          }
                          break;
     case TM_PRESSURE:    {
@@ -2245,23 +2247,23 @@ bool parse_json (const char* json_string) {
                         publish_packet ((ccsds_t*)&neo6mv2);
                         break;
     case TM_MOTION:     // {\"ctr\":%u,\"accel\":[%d,%d,%d],\"gyro\":[%d,%d,%d],\"tilt\":%d,\"g\":%d,\"a\":%d,\"rpm\":%d,\"range\":[%u,%u],\"valid\":\"%d%d\"}
-                        mpu6050.packet_ctr = obj["ctr"];
-                        mpu6050.millis = obj["millis"],
-                        mpu6050.accel_x = obj["accel"][0];
-                        mpu6050.accel_y = obj["accel"][1];
-                        mpu6050.accel_z = obj["accel"][2];
-                        mpu6050.gyro_x = obj["gyro"][0];
-                        mpu6050.gyro_y = obj["gyro"][1];
-                        mpu6050.gyro_z = obj["gyro"][2];
-                        mpu6050.tilt = obj["tilt"];
-                        mpu6050.g = obj["g"];
-                        mpu6050.a = obj["a"];
-                        mpu6050.rpm = obj["rpm"];
-                        mpu6050.accel_range = obj["range"][0];
-                        mpu6050.gyro_range = obj["range"][1];
-                        mpu6050.accel_valid = obj["valid"][0];
-                        mpu6050.gyro_valid = obj["valid"][1];
-                        publish_packet ((ccsds_t*)&mpu6050);
+                        motion.packet_ctr = obj["ctr"];
+                        motion.millis = obj["millis"],
+                        motion.accel_x = obj["accel"][0];
+                        motion.accel_y = obj["accel"][1];
+                        motion.accel_z = obj["accel"][2];
+                        motion.gyro_x = obj["gyro"][0];
+                        motion.gyro_y = obj["gyro"][1];
+                        motion.gyro_z = obj["gyro"][2];
+                        motion.tilt = obj["tilt"];
+                        motion.g = obj["g"];
+                        motion.a = obj["a"];
+                        motion.rpm = obj["rpm"];
+                        motion.accel_range = obj["range"][0];
+                        motion.gyro_range = obj["range"][1];
+                        motion.accel_valid = obj["valid"][0];
+                        motion.gyro_valid = obj["valid"][1];
+                        publish_packet ((ccsds_t*)&motion);
                         break;
     case TM_PRESSURE:   // {\"ctr\":%u,\"p\":%.2f,\"p0\":%.2f,\"T\":%.2f,\"h\":%.2f,\"v_v\":%.2f}
                         bmp280.packet_ctr = obj["ctr"];
@@ -2469,9 +2471,9 @@ bool cmd_reboot (uint8_t subsystem) {
 
 bool cmd_set_opsmode (uint8_t opsmode) {
   if (opsmode == MODE_CHECKOUT or opsmode == MODE_NOMINAL or opsmode == MODE_DONE) {
-    sprintf (buffer, "Setting opsmode for ESP32 subsystem to '%s'", modeName[opsmode]);
-    publish_event (STS_ESP32, SS_ESP32, EVENT_CMD_RESP, buffer);
-    esp32.opsmode = opsmode;
+    sprintf (buffer, "Setting opsmode to '%s'", modeName[opsmode]);
+    publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
+    tm_this->opsmode = opsmode;
   }
   else {
     sprintf (buffer, "Opsmode '%s' not known or not allowed", modeName[opsmode]);
