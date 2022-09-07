@@ -73,7 +73,7 @@ The following other libraries need to be installed:
     #define NMEAGPS_PARSE_VTG
     #define NMEAGPS_PARSE_ZDA
     
-    #define LAST_SENTENCE_IN_INTERVAL NMEAGPS::NMEA_GSV
+    #define LAST_SENTENCE_IN_INTERVAL NMEAGPS::NMEA_ZDA
     
     #define NMEAGPS_PARSING_SCRATCHPAD
     ```
