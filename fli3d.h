@@ -4,7 +4,7 @@
  
 #ifndef _FLI3D_H_
 #define _FLI3D_H_
-#define LIB_VERSION "1.1.0/20220827"
+#define LIB_VERSION "1.1.0/20220907"
 
 #ifdef ARDUINO_MH_ET_LIVE_ESP32MINIKIT
 #define PLATFORM_ESP32
@@ -193,7 +193,8 @@ extern const char commLineName[9][13];
 #define TC_LOAD_CONFIG         44
 #define TC_LOAD_ROUTING        45
 #define TC_SET_PARAMETER       46
-extern const char tcName[5][20];
+#define TC_FREEZE_OPSMODE      47
+extern const char tcName[6][20];
 
 // serial buffer status
 #define SERIAL_UNKNOWN         0
@@ -738,6 +739,7 @@ extern bool file_load_config (uint8_t filesystem, const char* filename);
 extern bool file_load_routing (uint8_t filesystem, const char* filename);
 extern String set_routing (char* routing_table, const char* routing_string);
 extern bool set_parameter (const char* parameter, const char* value);
+extern void set_opsmode (uint8_t default_opsmode);
 
 // WIFI FUNCTIONALITY
 extern bool wifi_setup ();
@@ -793,6 +795,7 @@ extern bool cmd_load_config (const char* filename);
 extern bool cmd_load_routing (const char* filename);
 extern bool cmd_set_parameter (const char* parameter, const char* value);
 extern bool cmd_toggle_routing (uint16_t PID, const char interface);
+extern bool cmd_freeze_opsmode (bool frozen);
 
 // SUPPORT FUNCTIONS
 extern uint8_t id_of (const char* string, uint8_t string_len, const char* array_of_strings, uint16_t array_len);

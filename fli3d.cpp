@@ -31,6 +31,7 @@ char buffer[JSON_MAX_SIZE];
 char serial_in_buffer[JSON_MAX_SIZE];
 char ccsds_path_buffer[32] = "/nodate.ccsds";
 char json_path_buffer[32] = "/nodate.json";
+char lock_filename[32] = "/opsmode.lock";
 char today_dir[16] = "/";
 
 #ifdef PLATFORM_ESP32
@@ -97,7 +98,7 @@ const char cameraResolutionName[11][10] = { "160x120", "invalid1", "invalid2", "
 const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
 
 const char commLineName[9][13] =          { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs", "radio" };
-const char tcName[5][20] =                { "reboot", "set_opsmode", "load_config", "load_routing", "set_parameter" };
+const char tcName[6][20] =                { "reboot", "set_opsmode", "load_config", "load_routing", "set_parameter", "freeze_opsmode" };
 const char gpsStatusName[9][11] =         { "none", "est", "time_only", "std", "dgps", "rtk_float", "rtk_fixed", "status_pps", "waiting" }; 
 const char fsName[3][5] =                 { "none", "FS", "SD" };
 char routing_serial[NUMBER_OF_PID];
@@ -872,6 +873,33 @@ bool set_parameter (const char* parameter, const char* value) {
   #endif
   publish_udp_text (buffer);
   return (success);
+}
+
+void set_opsmode (uint8_t default_opsmode) {
+  File lock_file;
+  uint8_t opsmode;
+  bool frozen;
+  opsmode = default_opsmode;
+  switch (tm_this->buffer_fs) {
+  case FS_LITTLEFS: if (LITTLEFS.file_exists(lock_filename)) {
+  		      lock_file = LITTLEFS.open(lock_filename, "r");
+  		      lock_file.read(&opsmode, 1);
+  		      lock_file.close();
+  		      frozen = true;
+                    }
+                    break;
+  #ifdef PLATFORM_ESP32CAM
+  case FS_SD_MMC:   if (LITTLEFS.file_exists(lock_filename)) {
+  		      lock_file = SD_MCC.open(lock_filename, "r");
+  		      lock_file.read(&opsmode, 1);
+  		      lock_file.close();
+  		      frozen = true;
+                    }
+                    break;
+  #endif
+  tm_this->opsmode = opsmode;
+  sprintf(buffer, "Set %s opsmode to '%s' (%s)", subsystemName[SS_THIS], modeName[opsmode], frozen?"frozen","not frozen)");
+  publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);  
 }
 
 // WIFI FUNCTIONALITY
@@ -1782,6 +1810,8 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
                                                          break;
                              case TC_SET_PARAMETER:      cmd_set_parameter (tc_this->parameter, (char*)(tc_this->parameter + strlen(tc_this->parameter) + 1)); 
                                                          break;
+                             case TC_FREEZE_OPSMODE:     cmd_freeze_opsmode ((uint8_t)tc_this->parameter[0]));
+                             	                         break;
                              default:                    sprintf (buffer,  "CCSDS command to %s not understood", subsystemName[SS_THIS]);
                                                          publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
                                                          break;
@@ -2092,6 +2122,10 @@ bool parse_json (const char* json_string) {
                           // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
                           cmd_set_parameter (obj["parameter"], obj["value"]);
                         }
+                        else if (!strcmp(obj["cmd"], "freeze_opsmode")) {
+                          // {"cmd":"freeze_opsmode", "frozen":0|1}
+                          cmd_freeze_opsmode (obj["frozen"]);
+                        }
                         else {
                           publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32 not understood");
                           return false;
@@ -2119,6 +2153,11 @@ bool parse_json (const char* json_string) {
                                                  strcpy ((char*)(&tc_esp32cam.parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
+                          case TC_FREEZE_OPSMODE:// {"cmd":"freeze_opsmode","frozen":0|1}
+                          	                 tc_esp32cam.parameter[0] = (char) atoi (obj["frozen"]);
+                          	                 tc_esp32cam.parameter[1] = 0;
+                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, 7);
+                          	  		 break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32CAM not understood");
                                                  return false;
                             
@@ -2329,6 +2368,11 @@ bool parse_json (const char* json_string) {
                                                  strcpy ((char*)(&tc_esp32.parameter + strlen (obj["parameter"]) + 1), obj["parameter"]);
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
+                          case TC_FREEZE_OPSMODE:// {"cmd":"freeze_opsmode","frozen"0:1}
+                          	                 tc_esp32.parameter[0] = (char)obj["frozen"];
+                                                 tc_esp32.parameter[1] = 0;
+                                                 set_ccsds_payload_len ((ccsds_t*)&tc_esp32, 7);
+                          	  		 break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32 not understood");
                                                  return false;
                             
@@ -2355,6 +2399,10 @@ bool parse_json (const char* json_string) {
                         else if (!strcmp(obj["cmd"], "set_parameter")) {
                           // {"cmd":"set_parameter","parameter":"xxxxxx","value":"xxxxxx"}
                           cmd_set_parameter (obj["parameter"], obj["value"]);
+                        }
+                        else if (!strcmp(obj["cmd"], "freeze_opsmode")) {
+                          // {"cmd":"freeze_opsmode", "frozen":0|1}
+                          cmd_freeze_opsmode (obj["frozen"]);
                         }
                         else {
                           publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32CAM not understood");
@@ -2520,6 +2568,32 @@ bool cmd_load_routing (const char* filename) {
 
 bool cmd_toggle_routing (uint16_t PID, const char interface) {
   // TODO: TBW + integrate
+}
+
+bool cmd_freeze_opsmode (bool frozen) {
+  File file_lock;
+  switch (tm_this->buffer_fs) {
+  case FS_LITTLEFS: if (frozen) {
+  		      file_lock = LITTLEFS.open(lock_filename, "w");
+                      file_lock.write (tm_this->opsmode, 1);
+                      file_lock.close ();
+                    }
+                    else {
+                      LITTLEFS.remove(lock_filename);
+                    }
+                    break;
+  #ifdef PLATFORM_ESP32CAM
+  case FS_SD_MMC:  if (frozen) {
+  		      file_lock = SD_MMC.open(lock_filename, "a+");
+                      file_lock.write (tm_this->opsmode, 1);
+                      file_lock.close ();
+                    }
+                    else {
+                      SD_MMC.remove(lock_filename);
+                    }
+                   break;
+  #endif
+  }
 }
 
 // SUPPORT FUNCTIONS
