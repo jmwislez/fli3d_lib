@@ -881,7 +881,7 @@ void set_opsmode (uint8_t default_opsmode) {
   bool frozen;
   opsmode = default_opsmode;
   switch (tm_this->buffer_fs) {
-  case FS_LITTLEFS: if (LITTLEFS.file_exists(lock_filename)) {
+  case FS_LITTLEFS: if (LITTLEFS.exists(lock_filename)) {
   		      lock_file = LITTLEFS.open(lock_filename, "r");
   		      lock_file.read(&opsmode, 1);
   		      lock_file.close();
@@ -889,7 +889,7 @@ void set_opsmode (uint8_t default_opsmode) {
                     }
                     break;
   #ifdef PLATFORM_ESP32CAM
-  case FS_SD_MMC:   if (LITTLEFS.file_exists(lock_filename)) {
+  case FS_SD_MMC:   if (LITTLEFS.exists(lock_filename)) {
   		      lock_file = SD_MCC.open(lock_filename, "r");
   		      lock_file.read(&opsmode, 1);
   		      lock_file.close();
@@ -897,8 +897,9 @@ void set_opsmode (uint8_t default_opsmode) {
                     }
                     break;
   #endif
+  }
   tm_this->opsmode = opsmode;
-  sprintf(buffer, "Set %s opsmode to '%s' (%s)", subsystemName[SS_THIS], modeName[opsmode], frozen?"frozen","not frozen)");
+  sprintf(buffer, "Set %s opsmode to '%s' (%s)", subsystemName[SS_THIS], modeName[opsmode], frozen?"frozen":"not frozen)");
   publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);  
 }
 
@@ -1810,7 +1811,7 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
                                                          break;
                              case TC_SET_PARAMETER:      cmd_set_parameter (tc_this->parameter, (char*)(tc_this->parameter + strlen(tc_this->parameter) + 1)); 
                                                          break;
-                             case TC_FREEZE_OPSMODE:     cmd_freeze_opsmode ((uint8_t)tc_this->parameter[0]));
+                             case TC_FREEZE_OPSMODE:     cmd_freeze_opsmode ((uint8_t)tc_this->parameter[0]);
                              	                         break;
                              default:                    sprintf (buffer,  "CCSDS command to %s not understood", subsystemName[SS_THIS]);
                                                          publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
@@ -2575,7 +2576,7 @@ bool cmd_freeze_opsmode (bool frozen) {
   switch (tm_this->buffer_fs) {
   case FS_LITTLEFS: if (frozen) {
   		      file_lock = LITTLEFS.open(lock_filename, "w");
-                      file_lock.write (tm_this->opsmode, 1);
+                      file_lock.write ((char)tm_this->opsmode);
                       file_lock.close ();
                     }
                     else {
@@ -2585,7 +2586,7 @@ bool cmd_freeze_opsmode (bool frozen) {
   #ifdef PLATFORM_ESP32CAM
   case FS_SD_MMC:  if (frozen) {
   		      file_lock = SD_MMC.open(lock_filename, "a+");
-                      file_lock.write (tm_this->opsmode, 1);
+                      file_lock.write ((char)tm_this->opsmode);
                       file_lock.close ();
                     }
                     else {
