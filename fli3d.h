@@ -51,6 +51,7 @@
 #define I2C_SCL_PIN               SCL  // IO22; default SCL I2C pin on ESP32
 #define I2C_SDA_PIN               SDA  // IO21; default SDA I2C pin on ESP32
 #define SEP_STS_PIN               19   // IO19; 
+#define DHT_PIN                   18   // IO18;
 #define RF433_TX_PIN              26   // IO26; 
 #define DUMMY_PIN2                14   // IO14; hack: RadioHead needs a PTT pin to be set
 #define GPS_RX_PIN                16   // IO16; second serial interface on ESP32 (Serial1)
@@ -207,6 +208,7 @@ extern const char tcName[6][20];
 #define SERIAL_COMPLETE        7
 
 extern const char gpsStatusName[9][11]; 
+extern const char dhtName[5][7];
 
 // TM/TC packet definitions
 
@@ -272,6 +274,7 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   uint8_t     serial_out_buffer;
   uint16_t    mem_free;
   uint16_t    fs_free;
+  int16_t     temperature;             // cdegC
   bool        radio_enabled:1;         // 7
   bool        pressure_enabled:1;      //  6
   bool        motion_enabled:1;        //   5
@@ -283,7 +286,7 @@ struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
   bool        fs_enabled:1;            // 7
   bool        ftp_enabled:1;           //  6
   bool        ota_enabled:1;           //   5 
-  bool        free_24:1;               //    4 - free to assign
+  bool        temperature_enabled:1;   //    4
   bool        free_23:1;               //     3 - free to assign
   bool        free_22:1;               //      2 - free to assign
   bool        free_21:1;               //       1 - free to assign
@@ -605,7 +608,8 @@ struct __attribute__ ((packed)) config_esp32_t {
   bool        pressure_enable:1;       
   bool        motion_enable:1;         
   bool        gps_enable:1;            
-  bool        camera_enable:1;         
+  bool        camera_enable:1;
+  bool        temperature_enable:1;
   bool        wifi_enable:1;           
   bool        wifi_sta_enable:1;       
   bool        wifi_ap_enable:1;  

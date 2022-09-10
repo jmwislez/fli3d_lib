@@ -100,6 +100,7 @@ const char dataEncodingName[3][8] =       { "CCSDS", "JSON", "ASCII" };
 const char commLineName[9][13] =          { "serial", "wifi_udp", "wifi_yamcs", "wifi_cam", "sd_ccsds", "sd_json", "sd_cam", "fs", "radio" };
 const char tcName[6][20] =                { "reboot", "set_opsmode", "load_config", "load_routing", "set_parameter", "freeze_opsmode" };
 const char gpsStatusName[9][11] =         { "none", "est", "time_only", "std", "dgps", "rtk_float", "rtk_fixed", "status_pps", "waiting" }; 
+const char dhtName[5][7] =                { "AUTO", "DHT11", "DHT22", "AM2302", "RHT03" }; 
 const char fsName[3][5] =                 { "none", "FS", "SD" };
 char routing_serial[NUMBER_OF_PID];
 char routing_udp[NUMBER_OF_PID];
@@ -313,6 +314,7 @@ void load_default_config () {
   config_esp32.motion_enable = true;
   config_esp32.gps_enable = true;
   config_esp32.camera_enable = false;
+  config_esp32.temperature_enable = true;
   config_esp32.wifi_enable = true;
   config_esp32.wifi_sta_enable = true;
   config_esp32.wifi_ap_enable = true;
@@ -757,6 +759,11 @@ bool set_parameter (const char* parameter, const char* value) {
   else if (!strcmp(parameter, "gps_enable")) { 
     config_this->gps_enable = atoi(value);
     sprintf (buffer, "Set gps_enable to %s", config_this->gps_enable?"true":"false");
+    success = true;
+  }  
+  else if (!strcmp(parameter, "temperature_enable")) { 
+    config_this->temperature_enable = atoi(value);
+    sprintf (buffer, "Set temperature_enable to %s", config_this->temperature_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "motion_udp_raw_enable")) { 
