@@ -2,7 +2,7 @@
 
 ## Install this library
 Install these files as a library in the Arduino IDE by going into ```Arduino\libraries```, and doing ```git clone https://github.com/jmwislez/fli3d_lib```.
-Note that ESP32 core 1.0.6 was used (2.0.4 gave compilation errors).
+Note that ESP32 core 1.0.6 was used (no success yet on 2.0.4).
 
 ## Install other dependencies
 
@@ -12,6 +12,7 @@ The following other libraries need to be installed:
   - ArduinoJson
   - LittleFS_esp32
   - SerialTransfer
+  - ESPdht (optional, for extra thermal sensor in weather balloon version)
 - via ```git clone``` in ```Arduino/libraries/```:
   - NTPClient (https://github.com/taranais/NTPClient)
     This version of NTPClient contains getFormattedDate
@@ -39,6 +40,7 @@ The following other libraries need to be installed:
     ```
   - I2Cdev (subdirectory ```Arduino/I2Cdev/``` of https://github.com/jrowberg/i2cdevlib)
   - MPU6050 (subdirectory ```Arduino/MPU6050/``` of https://github.com/jrowberg/i2cdevlib)
+  - MPU9250 (subdirectory ```Arduino/MPU9250/``` of https://github.com/jrowberg/i2cdevlib) - instead of MPU6050 in weather balloon version
   - NeoGPS (https://github.com/SlashDevin/NeoGPS)
     In ```src/GPSfix_cfg.h```, ensure the following configuration:
     ```c++
