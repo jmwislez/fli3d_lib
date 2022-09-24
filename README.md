@@ -44,7 +44,7 @@ The following other libraries need to be installed:
   - NeoGPS (https://github.com/SlashDevin/NeoGPS)
     In ```src/GPSfix_cfg.h```, ensure the following configuration:
     ```c++
-    //#define GPS_FIX_DATE
+    #define GPS_FIX_DATE
     #define GPS_FIX_TIME
     #define GPS_FIX_LOCATION
     //#define GPS_FIX_LOCATION_DMS
