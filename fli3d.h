@@ -4,7 +4,7 @@
  
 #ifndef _FLI3D_H_
 #define _FLI3D_H_
-#define LIB_VERSION "1.1.0/20220907"
+#define LIB_VERSION "Fli3d lib 1.1.2/20220914"
 
 #ifdef ARDUINO_MH_ET_LIVE_ESP32MINIKIT
 #define PLATFORM_ESP32
@@ -32,6 +32,7 @@
 #include <FS.h>
 #include <SerialTransfer.h>
 #include <LITTLEFS.h>
+#include <UnixTime.h>
 
 #define SERIAL_TCTM
 
@@ -130,8 +131,8 @@ extern const char subsystemName[13][14];
 #define MODE_INIT              0
 #define MODE_CHECKOUT          1
 #define MODE_NOMINAL           2
-#define MODE_DONE              3
-extern const char modeName[4][10];
+#define MODE_MAINTENANCE       3
+extern const char modeName[4][12];
 
 // state
 #define STATE_STATIC           0
@@ -589,6 +590,7 @@ struct __attribute__ ((packed)) config_network_t {
 };
 
 struct __attribute__ ((packed)) config_esp32_t { 
+  uint32_t    boot_epoch;
   uint8_t     radio_rate;               // Hz (valid: 2 or less)
   uint8_t     pressure_rate;            // Hz (up to 157 Hz, highest resolution up to 23 Hz); reached 176 Hz on ESP8266
   uint8_t     motion_rate;              // Hz (up to 400) - 255 is highest set value
@@ -624,6 +626,7 @@ struct __attribute__ ((packed)) config_esp32_t {
 };
 
 struct __attribute__ ((packed)) config_esp32cam_t {
+  uint32_t    boot_epoch;
   char        config_file[20];
   char        routing_file[20];
   uint8_t     buffer_fs:2;
@@ -653,6 +656,7 @@ struct __attribute__ ((packed)) var_timer_t {
   uint32_t    next_motion_time;
   uint32_t    next_gps_time;
   uint32_t    next_camera_time;
+  uint32_t    next_temperature_time;
   uint32_t    next_wifi_time;
   uint32_t    next_ntp_time;
   uint32_t    last_serial_in_millis;
@@ -723,12 +727,13 @@ extern config_esp32cam_t*  config_this;
 
 extern char buffer[JSON_MAX_SIZE];
 extern File file_ccsds, file_json;
+extern UnixTime datetime;
 
 // FS FUNCTIONALITY
 extern bool fs_setup ();
 extern bool fs_flush_data ();
 extern uint16_t fs_free ();
-void create_today_dir ();
+void create_today_dir (uint8_t filesystem);
 #ifdef PLATFORM_ESP32CAM
 extern bool sd_setup ();
 extern uint16_t sd_free ();
