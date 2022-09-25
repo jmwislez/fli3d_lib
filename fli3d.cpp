@@ -187,7 +187,7 @@ void create_today_dir (uint8_t filesystem) {
   while (!strcmp(today_dir, "/") or ((filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir)) or (filesystem == FS_SD_MMC and SD_MMC.exists(today_dir)))) {
   #endif
     datetime.getDateTime(config_this->boot_epoch + millis()/1000);
-    sprintf (today_tag, "%s%s%s%c%c", datetime.year, datetime.month, datetime.day, sequencer1, sequencer2++);
+    sprintf (today_tag, "%02u%02u%02u%c%c", datetime.year, datetime.month, datetime.day, sequencer1, sequencer2++);
     if (sequencer2 == '[') {
       sequencer1++;
       sequencer2 = 'A';
