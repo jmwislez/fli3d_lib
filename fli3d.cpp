@@ -2,7 +2,6 @@
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
  */
 
-//#ifndef PLATFORM_ESP8266_RADIO
 #ifndef ARDUINO_ESP8266_NODEMCU
 
 #include <fli3d.h>

@@ -4,7 +4,7 @@
  
 #ifndef _FLI3D_H_
 #define _FLI3D_H_
-#define LIB_VERSION "Fli3d lib 1.1.3/20220925"
+#define LIB_VERSION "Fli3d lib 1.2.0/20240802"
 
 #ifdef ARDUINO_MH_ET_LIVE_ESP32MINIKIT
 #define PLATFORM_ESP32
