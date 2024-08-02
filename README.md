@@ -2,7 +2,7 @@
 
 ## Install this library
 Install these files as a library in the Arduino IDE by going into ```Arduino\libraries```, and doing ```git clone https://github.com/jmwislez/fli3d_lib```.
-Note that ESP32 core 1.0.6 was used (no success yet on 2.0.4).
+The code was verified to compile on ESP32 core v1.0.6, v2.0.17, and v3.0.3.
 
 ## Install other dependencies
 
@@ -10,7 +10,7 @@ The following other libraries need to be installed:
 
 - via Arduino IDE "Manage libraries...":
   - ArduinoJson
-  - LittleFS_esp32
+  - LittleFS_esp32 (only for ESP32 core v1.0.6)
   - SerialTransfer
   - ESPdht (optional, for extra thermal sensor in weather balloon version)
 - via ```git clone``` in ```Arduino/libraries/```:
@@ -83,7 +83,7 @@ The following other libraries need to be installed:
   
 ## Configure library
 
-Create ```secrets.h``` based on ```secrets.h.example```.
+Create ```fli3d_secrets.h``` based on ```secrets.h.example```.
 
 ## Use fli3d_lib
 
