@@ -2,17 +2,18 @@
  * Fli3d - Library (file system, wifi, TM/TC, comms functionality)
  */
 
-#ifndef PLATFORM_ESP8266_RADIO
+//#ifndef PLATFORM_ESP8266_RADIO
+#ifndef ARDUINO_ESP8266_NODEMCU
 
-#include "fli3d.h"
-#include "secrets.h"
+#include <fli3d.h>
+#include <fli3d_secrets.h>
 #include <Arduino.h>
 #ifdef PLATFORM_ESP32CAM
-#include "SD_MMC.h"
-#include "SPI.h"
+#include <SD_MMC.h>
+#include <SPI.h>
 #endif
 
-SerialTransfer serialTransfer;
+//SerialTransfer serialTransfer;
 WiFiUDP wifiUDP;
 WiFiUDP wifiUDP_NTP;
 #ifdef ASYNCUDP
@@ -27,12 +28,10 @@ File file_json;
 buffer_t ccsds_archive;
 ccsds_t replayed_ccsds;
 UnixTime datetime(0);
-
-
-char buffer[JSON_MAX_SIZE];
-char serial_in_buffer[JSON_MAX_SIZE];
-char ccsds_path_buffer[32] = "/nodate.ccsds";
-char json_path_buffer[32] = "/nodate.json";
+char buffer[BUFFER_MAX_SIZE];
+char serial_in_buffer[BUFFER_MAX_SIZE];
+char ccsds_path_buffer[38] = "/nodate.ccsds";
+char json_path_buffer[38] = "/nodate.json";
 char lock_filename[32] = "/opsmode.lock";
 char today_dir[16] = "/";
 
@@ -116,18 +115,28 @@ char routing_sd_ccsds[NUMBER_OF_PID];
 // FS FUNCTIONALITY
 
 bool fs_setup () {
+  #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
   if (LITTLEFS.begin(false)) {
+    sprintf (buffer, "Initialized FS (size: %u kB; free: %u kB)", LITTLEFS.totalBytes()/1024, fs_free());
+  #else
+  if (LittleFS.begin(false)) {
+    sprintf (buffer, "Initialized FS (size: %u kB; free: %u kB)", LittleFS.totalBytes()/1024, fs_free());
+  #endif 
     tm_this->fs_enabled = true;
     tm_this->fs_active = true;
-    sprintf (buffer, "Initialized FS (size: %u kB; free: %u kB)", LITTLEFS.totalBytes()/1024, fs_free());
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
     return true;
   }
   else {
+    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
     if (LITTLEFS.begin(true)) {
+      sprintf (buffer, "Formatted and initialized FS (size: %d kB; free: %d kB)", LITTLEFS.totalBytes()/1024, fs_free());
+    #else
+    if (LittleFS.begin(true)) {
+      sprintf (buffer, "Formatted and initialized FS (size: %d kB; free: %d kB)", LittleFS.totalBytes()/1024, fs_free());
+    #endif
       tm_this->fs_enabled = true;
       tm_this->fs_active = true;
-      sprintf (buffer, "Formatted and initialized FS (size: %d kB; free: %d kB)", LITTLEFS.totalBytes()/1024, fs_free());
       publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
       return true;
     }
@@ -146,7 +155,11 @@ bool fs_flush_data () {
   #ifdef PLATFORM_ESP32CAM
   if (true) { // TODO: add viable inhibit for ESP32CAM
   #endif
+    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
     File dir = LITTLEFS.open ("/");
+    #else
+    File dir = LittleFS.open ("/");
+    #endif  
     File file = dir.openNextFile ();
     char local_path_buffer[32];
     char path_buffer[32];
@@ -154,37 +167,59 @@ bool fs_flush_data () {
       if (file.isDirectory()) {
         sprintf (path_buffer, "%s", file.name());
         file.close ();
+        #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
         File local_dir = LITTLEFS.open (path_buffer);
+        #else
+        File local_dir = LittleFS.open (path_buffer);
+        #endif
         File local_file = local_dir.openNextFile ();
         while (local_file) {
           sprintf (local_path_buffer, "%s", local_file.name());
           local_file.close ();
+          #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
           LITTLEFS.remove (local_path_buffer);
+          #else
+          LittleFS.remove (local_path_buffer);
+          #endif
           local_file = local_dir.openNextFile ();
         }  
+        #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
         LITTLEFS.rmdir (path_buffer);
+        #else
+        LittleFS.rmdir (path_buffer);
+        #endif
       }
       file = dir.openNextFile ();
     }
     tm_this->fs_enabled = true; // needed to have next message stored
     publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "Deleted all data files since FS is full");
+    return true;
   }
   else {
     publish_event (STS_THIS, SS_THIS, EVENT_WARNING, "FS is full, but data not deleted because this is inhibited");
+    return false;
   }
 }
 
 void create_today_dir (uint8_t filesystem) {
-  char today_tag[12];
+  char today_tag[14];
   char sequencer1 = 'A';
   char sequencer2 = 'A';
   sync_file_ccsds ();
   sync_file_json ();
   #ifdef PLATFORM_ESP32  
+  #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
   while (!strcmp(today_dir, "/") or (filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir))) {
+  #else
+  while (!strcmp(today_dir, "/") or (filesystem == FS_LITTLEFS and LittleFS.exists(today_dir))) {
+  #endif
   #endif
   #ifdef PLATFORM_ESP32CAM  
+  #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
   while (!strcmp(today_dir, "/") or ((filesystem == FS_LITTLEFS and LITTLEFS.exists(today_dir)) or (filesystem == FS_SD_MMC and SD_MMC.exists(today_dir)))) {
+  #else
+  while (!strcmp(today_dir, "/") or ((filesystem == FS_LITTLEFS and LittleFS.exists(today_dir)) or (filesystem == FS_SD_MMC and SD_MMC.exists(today_dir)))) {
+  #endif
   #endif
     datetime.getDateTime(config_this->boot_epoch + millis()/1000);
     sprintf (today_tag, "%02u%02u%02u%c%c", datetime.year, datetime.month, datetime.day, sequencer1, sequencer2++);
@@ -195,6 +230,7 @@ void create_today_dir (uint8_t filesystem) {
     sprintf (today_dir, "/%s", today_tag);
   }
   if (filesystem == FS_LITTLEFS) {
+  #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
     LITTLEFS.mkdir(today_dir);
     if (LITTLEFS.exists("/nodate.ccsds")) {
       sprintf (ccsds_path_buffer, "%s/%s.ccsds", today_dir, today_tag);
@@ -205,6 +241,18 @@ void create_today_dir (uint8_t filesystem) {
       LITTLEFS.rename ("/nodate.json", json_path_buffer);
     }
   }
+  #else
+    LittleFS.mkdir(today_dir);
+    if (LittleFS.exists("/nodate.ccsds")) {
+      sprintf (ccsds_path_buffer, "%s/%s.ccsds", today_dir, today_tag);
+      LittleFS.rename ("/nodate.ccsds", ccsds_path_buffer);
+    }  
+    if (LittleFS.exists("/nodate.json")) {
+      sprintf (json_path_buffer, "%s/%s.json", today_dir, today_tag);
+      LittleFS.rename ("/nodate.json", json_path_buffer);
+    }
+  }
+  #endif
   #ifdef PLATFORM_ESP32CAM 
   else if (filesystem == FS_SD_MMC) {
     SD_MMC.mkdir(today_dir);
@@ -227,13 +275,21 @@ uint16_t fs_free () {
   if (config_this->fs_enable) {
     sync_file_ccsds ();
     sync_file_json ();
+    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
     if (tm_this->fs_enabled and LITTLEFS.totalBytes()-LITTLEFS.usedBytes() <= 8192) {
+    #else
+    if (tm_this->fs_enabled and LittleFS.totalBytes()-LittleFS.usedBytes() <= 8192) {
+    #endif
       tm_this->fs_enabled = false;
       tm_this->err_fs_dataloss = true;
       sprintf (buffer, "Disabling further write access to FS because it is full");
       publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);
     }
+    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
     return ((LITTLEFS.totalBytes()-LITTLEFS.usedBytes())/1024);
+    #else
+    return ((LittleFS.totalBytes()-LittleFS.usedBytes())/1024);
+    #endif
   }
   else { 
     return (0);
@@ -271,28 +327,34 @@ bool ftp_setup () {
 
 bool ftp_check (uint8_t filesystem) {
   switch (filesystem) {
-  case FS_LITTLEFS: wifiTCP_FTP.handleFTP (LITTLEFS);  
-  	                break;
+  case FS_LITTLEFS: 
+                    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+                    wifiTCP_FTP.handleFTP (LITTLEFS);  
+                    #else
+                    wifiTCP_FTP.handleFTP (LittleFS);  
+                    #endif
+                    break;
   #ifdef PLATFORM_ESP32CAM
   case FS_SD_MMC:   wifiTCP_FTP.handleFTP (SD_MMC);
-  	                break;
+                    break;
   #endif
   }
   tm_this->ftp_fs = filesystem;
   tm_this->ftp_active = true;
+  return true;
 }
 
 // CONFIGURATION FUNCTIONALITY
 
 void load_default_config () {
-  strcpy (config_network.wifi_ssid, default_wifi_ssid); 
-  strcpy (config_network.wifi_password, default_wifi_password);
+  strcpy (config_network.wifi_ssid, default_wifi_ssid[0]); 
+  strcpy (config_network.wifi_password, default_wifi_password[0]);
   strcpy (config_network.ap_ssid, default_ap_ssid); 
   strcpy (config_network.ap_password, default_ap_password); 
   strcpy (config_network.ftp_user, default_ftp_user); 
   strcpy (config_network.ftp_password, default_ftp_password); 
-  strcpy (config_network.udp_server, default_udp_server);
-  strcpy (config_network.yamcs_server, default_yamcs_server); 
+  strcpy (config_network.udp_server, default_udp_server[0]);
+  strcpy (config_network.yamcs_server, default_yamcs_server[0]); 
   strcpy (config_network.ntp_server, default_ntp_server);
   config_network.udp_port = default_udp_port; 
   config_network.yamcs_tm_port = default_yamcs_tm_port; 
@@ -322,7 +384,7 @@ void load_default_config () {
   config_esp32.ftp_enable = true;
   config_esp32.ftp_fs = FS_LITTLEFS;
   config_esp32.buffer_fs = FS_LITTLEFS;
-  config_esp32.serial_format = ENC_CCSDS;
+  config_esp32.serial_format = ENC_JSON;
   config_esp32.ota_enable = true;
   config_esp32.motion_udp_raw_enable = false;
   config_esp32.gps_udp_raw_enable = false;
@@ -347,7 +409,7 @@ void load_default_config () {
   config_esp32cam.sd_image_enable = true;
   config_esp32cam.buffer_fs = FS_SD_MMC;
   config_esp32cam.ftp_fs = FS_SD_MMC;
-  config_esp32cam.serial_format = ENC_CCSDS;
+  config_esp32cam.serial_format = ENC_JSON;
   //                       0: STS_ESP32 
   //                       |  1: STS_ESP32CAM 
   //                       |  |  2: TM_ESP32 
@@ -395,14 +457,19 @@ void load_default_config () {
 
 bool file_load_settings (uint8_t filesystem) {
   char linebuffer[80];
-  uint8_t value_start;
+  uint8_t value_start = 0;
   File file;
   switch (filesystem) {
-  case FS_LITTLEFS: file = LITTLEFS.open ("/settings.ini");
-  	                break;
+  case FS_LITTLEFS: 
+                    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+                    file = LITTLEFS.open ("/settings.ini");
+                    #else
+                    file = LittleFS.open ("/settings.ini");
+                    #endif
+                    break;
   #ifdef PLATFORM_ESP32CAM
   case FS_SD_MMC:   file = SD_MMC.open ("/settings.ini");
-  	                break;
+                    break;
   #endif
   }
   if (!file) {
@@ -439,14 +506,19 @@ bool file_load_settings (uint8_t filesystem) {
 
 bool file_load_config (uint8_t filesystem, const char* filename) { 
   char linebuffer[80];
-  uint8_t value_start;
+  uint8_t value_start = 0;
   File file;
   switch (filesystem) {
-  case FS_LITTLEFS: file = LITTLEFS.open (filename);
-  	            break;
+  case FS_LITTLEFS: 
+                    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+                    file = LITTLEFS.open (filename);
+                    #else
+                    file = LittleFS.open (filename);
+                    #endif
+                break;
   #ifdef PLATFORM_ESP32CAM
   case FS_SD_MMC:   file = SD_MMC.open (filename);
-  	            break;
+                break;
   #endif
   }
   if (!file) {
@@ -482,10 +554,15 @@ bool file_load_config (uint8_t filesystem, const char* filename) {
 
 bool file_load_routing (uint8_t filesystem, const char* filename) {
   char linebuffer[80], parameter[80];
-  uint8_t value_start;
+  uint8_t value_start = 0;
   File file;
   switch (filesystem) {
-  case FS_LITTLEFS: file = LITTLEFS.open (filename);
+  case FS_LITTLEFS: 
+                    #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+                    file = LITTLEFS.open (filename);
+                    #else
+                    file = LittleFS.open (filename);
+                    #endif
                     break;
   #ifdef PLATFORM_ESP32CAM
   case FS_SD_MMC:   file = SD_MMC.open (filename);
@@ -507,29 +584,29 @@ bool file_load_routing (uint8_t filesystem, const char* filename) {
       if (linebuffer[i] == '\n' or !file.available()) { // full line read
         linebuffer[i] = 0; // mark end of c string
         strcpy (parameter, String(linebuffer).substring(value_start).c_str());
-        if (String(linebuffer).startsWith("rt_serial")) {\          
-          sprintf (buffer, "Set routing_serial to %s", set_routing (routing_serial, (const char*)parameter));
+        if (String(linebuffer).startsWith("rt_serial")) {         
+          sprintf (buffer, "Set routing_serial to %s", set_routing (routing_serial, (const char*)parameter).c_str());
           publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_yamcs")) {
-          sprintf (buffer, "Set routing_yamcs to %s", set_routing (routing_yamcs, (const char*)parameter));
+          sprintf (buffer, "Set routing_yamcs to %s", set_routing (routing_yamcs, (const char*)parameter).c_str());
           publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_udp")) {
-          sprintf (buffer, "Set routing_udp to %s", set_routing (routing_udp, (const char*)parameter));
+          sprintf (buffer, "Set routing_udp to %s", set_routing (routing_udp, (const char*)parameter).c_str());
           publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_fs")) {
-          sprintf (buffer, "Set routing_fs to %s", set_routing (routing_fs, (const char*)parameter));
+          sprintf (buffer, "Set routing_fs to %s", set_routing (routing_fs, (const char*)parameter).c_str());
           publish_udp_text (buffer);
         }
         #ifdef PLATFORM_ESP32CAM
         if (String(linebuffer).startsWith("rt_sd_json")) {
-          sprintf (buffer, "Set routing_sd_json to %s", set_routing (routing_sd_json, (const char*)parameter));
+          sprintf (buffer, "Set routing_sd_json to %s", set_routing (routing_sd_json, (const char*)parameter).c_str());
           publish_udp_text (buffer);
         }
         if (String(linebuffer).startsWith("rt_sd_ccsds")) {
-          sprintf (buffer, "Set routing_sd_ccsds to %s", set_routing (routing_sd_ccsds, (const char*)parameter));
+          sprintf (buffer, "Set routing_sd_ccsds to %s", set_routing (routing_sd_ccsds, (const char*)parameter).c_str());
           publish_udp_text (buffer);
         }
         #endif
@@ -551,14 +628,14 @@ String set_routing (char* routing_table, const char* routing_string) {
   uint16_t PID = 0;
   String return_string;
   for (uint8_t i = 0; i < strlen (routing_string); i++) {
-  	if (routing_string[i] == '0') {
-  	  *routing_table++ = false;
-  	  return_string += String(pidName[PID++]) + ":0 ";
-  	}
-  	else if (routing_string[i] == '1') {
-  	  *routing_table++ = true;
-  	  return_string += String(pidName[PID++]) + ":1 ";
-  	}
+    if (routing_string[i] == '0') {
+      *routing_table++ = false;
+      return_string += String(pidName[PID++]) + ":0 ";
+    }
+    else if (routing_string[i] == '1') {
+      *routing_table++ = true;
+      return_string += String(pidName[PID++]) + ":1 ";
+    }
   }
   publish_udp_text (return_string.c_str());
   return (return_string);
@@ -711,6 +788,7 @@ bool set_parameter (const char* parameter, const char* value) {
     }  
     success = true;
   } 
+  #ifdef MOTION
   else if (!strcmp(parameter, "motion_rate")) { 
     config_this->motion_rate = atoi(value);
      if (config_this->motion_rate) {
@@ -739,16 +817,6 @@ bool set_parameter (const char* parameter, const char* value) {
     }
     success = true;
   } 
-  else if (!strcmp(parameter, "radio_enable")) { 
-    config_this->radio_enable = atoi(value);
-    sprintf (buffer, "Set radio_enable to %s", config_this->radio_enable?"true":"false");
-    success = true;
-  }  
-  else if (!strcmp(parameter, "pressure_enable")) { 
-    config_this->pressure_enable = atoi(value);
-    sprintf (buffer, "Set pressure_enable to %s", config_this->pressure_enable?"true":"false");
-    success = true;
-  }  
   else if (!strcmp(parameter, "motion_enable")) { 
     config_this->motion_enable = atoi(value);
     sprintf (buffer, "Set motion_enable to %s", config_this->motion_enable?"true":"false");
@@ -757,11 +825,6 @@ bool set_parameter (const char* parameter, const char* value) {
   else if (!strcmp(parameter, "gps_enable")) { 
     config_this->gps_enable = atoi(value);
     sprintf (buffer, "Set gps_enable to %s", config_this->gps_enable?"true":"false");
-    success = true;
-  }  
-  else if (!strcmp(parameter, "temperature_enable")) { 
-    config_this->temperature_enable = atoi(value);
-    sprintf (buffer, "Set temperature_enable to %s", config_this->temperature_enable?"true":"false");
     success = true;
   }  
   else if (!strcmp(parameter, "motion_udp_raw_enable")) { 
@@ -806,16 +869,6 @@ bool set_parameter (const char* parameter, const char* value) {
     sprintf (buffer, "Set mpu_gyro_range to %d", motion.gyro_range);
     success = true;
   }
-  else if (!strcmp(parameter, "radio_enabled")) { 
-    tm_this->radio_enabled = atoi(value);
-    sprintf (buffer, "Set radio_enabled to %s", tm_this->radio_enabled?"true":"false");
-    success = true;
-  }  
-  else if (!strcmp(parameter, "pressure_enabled")) { 
-    tm_this->pressure_enabled = atoi(value);
-    sprintf (buffer, "Set pressure_enabled to %s", tm_this->pressure_enabled?"true":"false");
-    success = true;
-  }  
   else if (!strcmp(parameter, "motion_enabled")) { 
     tm_this->motion_enabled = atoi(value);
     sprintf (buffer, "Set motion_enabled to %s", tm_this->motion_enabled?"true":"false");
@@ -826,6 +879,36 @@ bool set_parameter (const char* parameter, const char* value) {
     sprintf (buffer, "Set gps_enabled to %s", tm_this->gps_enabled?"true":"false");
     success = true;
   }  
+  #endif
+  #ifdef RADIO
+  else if (!strcmp(parameter, "radio_enable")) { 
+    config_this->radio_enable = atoi(value);
+    sprintf (buffer, "Set radio_enable to %s", config_this->radio_enable?"true":"false");
+    success = true;
+  }  
+  else if (!strcmp(parameter, "radio_enabled")) { 
+    tm_this->radio_enabled = atoi(value);
+    sprintf (buffer, "Set radio_enabled to %s", tm_this->radio_enabled?"true":"false");
+    success = true;
+  }  
+  #endif
+  #ifdef PRESSURE
+  else if (!strcmp(parameter, "pressure_enable")) { 
+    config_this->pressure_enable = atoi(value);
+    sprintf (buffer, "Set pressure_enable to %s", config_this->pressure_enable?"true":"false");
+    success = true;
+  }  
+  else if (!strcmp(parameter, "temperature_enable")) { 
+    config_this->temperature_enable = atoi(value);
+    sprintf (buffer, "Set temperature_enable to %s", config_this->temperature_enable?"true":"false");
+    success = true;
+  }  
+  else if (!strcmp(parameter, "pressure_enabled")) { 
+    tm_this->pressure_enabled = atoi(value);
+    sprintf (buffer, "Set pressure_enabled to %s", tm_this->pressure_enabled?"true":"false");
+    success = true;
+  }  
+  #endif
   else if (!strcmp(parameter, "camera_enabled")) { 
     tm_this->camera_enabled = atoi(value);
     sprintf (buffer, "Set camera_enabled to %s", tm_this->camera_enabled?"true":"false");
@@ -885,21 +968,32 @@ void set_opsmode (uint8_t default_opsmode) {
   uint8_t opsmode  = default_opsmode;
   bool frozen = false;
   switch (tm_this->buffer_fs) {
-  case FS_LITTLEFS: if (LITTLEFS.exists(lock_filename)) {
-  		      lock_file = LITTLEFS.open(lock_filename, "r");
-  		      lock_file.read(&opsmode, 1);
-  		      lock_file.close();
-  		      frozen = true;
-                    }
-                    break;
+  case FS_LITTLEFS: 
+              #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+              if (LITTLEFS.exists(lock_filename)) {
+                lock_file = LITTLEFS.open(lock_filename, "r");
+              #else
+              if (LittleFS.exists(lock_filename)) {
+                lock_file = LittleFS.open(lock_filename, "r");
+              #endif
+                lock_file.read(&opsmode, 1);
+                lock_file.close();
+                frozen = true;
+              }
+              break;
   #ifdef PLATFORM_ESP32CAM
-  case FS_SD_MMC:   if (LITTLEFS.exists(lock_filename)) {
-  		      lock_file = SD_MMC.open(lock_filename, "r");
-  		      lock_file.read(&opsmode, 1);
-  		      lock_file.close();
-  		      frozen = true;
-                    }
-                    break;
+  case FS_SD_MMC:   
+              #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+              if (LITTLEFS.exists(lock_filename)) {
+              #else
+              if (LittleFS.exists(lock_filename)) {
+              #endif
+                lock_file = SD_MMC.open(lock_filename, "r");
+                lock_file.read(&opsmode, 1);
+                lock_file.close();
+                frozen = true;
+              }
+              break;
   #endif
   }
   tm_this->opsmode = opsmode;
@@ -938,7 +1032,7 @@ bool wifi_ap_setup () {
   return true;
 }
 
-bool wifi_sta_setup () {
+bool wifi_sta_setup_old () {
   WiFi.begin(config_network.wifi_ssid, config_network.wifi_password);  
   timeClient.begin();
   uint8_t i = 0;
@@ -961,6 +1055,63 @@ bool wifi_sta_setup () {
     tm_this->wifi_connected = true;
   } 
   i = 0;
+  ntp_check();
+  return tm_this->wifi_connected;
+}
+
+bool wifi_sta_setup () {
+  uint8_t i = 0;
+  uint8_t j = 0;
+  uint8_t k = 0;
+  int num_wifi_available = WiFi.scanNetworks();
+  while (k++ < num_wifi_available) {
+    if (!strcmp(config_network.wifi_ssid, WiFi.SSID(k).c_str())) {
+      WiFi.begin(config_network.wifi_ssid, config_network.wifi_password); 
+      while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
+        delay (1000);
+      }
+    }
+  } 
+  if (WiFi.status() != WL_CONNECTED) {
+    sprintf (buffer, "Tired of waiting for connection of %s to %s WiFi", subsystemName[SS_THIS], config_network.wifi_ssid);
+    publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
+    while (j < NUMBER_OF_WIFI and WiFi.status() != WL_CONNECTED) {
+      k = 0;
+      while (k++ < num_wifi_available) {
+        if (!strcmp(default_wifi_ssid[j], WiFi.SSID(k).c_str())) {
+          WiFi.begin(default_wifi_ssid[j], default_wifi_password[j]); 
+          i = 0;
+          while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
+            delay (1000);
+          }
+        }
+      }
+      if (WiFi.status() != WL_CONNECTED) {
+        sprintf (buffer, "Tired of waiting for connection of %s to %s WiFi", subsystemName[SS_THIS], default_wifi_ssid[j]);
+        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
+    j++;
+      }
+      else {
+        strcpy (config_network.wifi_ssid, default_wifi_ssid[j]);
+      }
+    }
+  }
+  if (j != 0) {
+    strcpy (config_network.udp_server, default_udp_server[j]);
+    strcpy (config_network.yamcs_server, default_yamcs_server[j]);
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    sprintf (buffer, "%s WiFi connected to %s with IP %s", subsystemName[SS_THIS], config_network.wifi_ssid, WiFi.localIP().toString().c_str());
+    publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+    if (config_this->wifi_udp_enable) {
+      tm_this->wifi_udp_enabled = true;
+    }
+    if (config_this->wifi_yamcs_enable) {
+      tm_this->wifi_yamcs_enabled = true;
+    }
+    tm_this->wifi_connected = true;
+  } 
+  timeClient.begin();
   ntp_check();
   return tm_this->wifi_connected;
 }
@@ -1082,14 +1233,18 @@ void publish_event (uint16_t PID, uint8_t subsystem, uint8_t event_type, const c
 }
 
 bool open_file_ccsds (uint8_t filesystem) { 
-  static uint32_t start_millis;
   if (!file_ccsds) {
     switch (filesystem) {
-    case FS_LITTLEFS: file_ccsds = LITTLEFS.open(ccsds_path_buffer, "a+");
-    	    	          break;
+    case FS_LITTLEFS: 
+                        #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+                        file_ccsds = LITTLEFS.open(ccsds_path_buffer, "a+");
+                        #else
+                        file_ccsds = LittleFS.open(ccsds_path_buffer, "a+");
+                        #endif
+                        break;
     #ifdef PLATFORM_ESP32CAM
-    case FS_SD_MMC:   file_ccsds = SD_MMC.open(ccsds_path_buffer, "a+");
-    	    	          break;
+    case FS_SD_MMC:     file_ccsds = SD_MMC.open(ccsds_path_buffer, "a+");
+                        break;
     #endif
     }
     if (!file_ccsds) {
@@ -1114,14 +1269,18 @@ bool open_file_ccsds (uint8_t filesystem) {
 }
 
 bool open_file_json (uint8_t filesystem) { 
-  static uint32_t start_millis;
   if (!file_json) {
     switch (filesystem) {
-    case FS_LITTLEFS: file_json = LITTLEFS.open(json_path_buffer, "a+");
-    	                break;
+    case FS_LITTLEFS: 
+                        #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+                        file_json = LITTLEFS.open(json_path_buffer, "a+");
+                        #else
+                        file_json = LittleFS.open(json_path_buffer, "a+");
+                        #endif
+                        break;
     #ifdef PLATFORM_ESP32CAM
     case FS_SD_MMC:   file_json = SD_MMC.open(json_path_buffer, "a+");
-    	    	          break;
+                          break;
     #endif
     }
     if (!file_json) {
@@ -1156,8 +1315,9 @@ bool sync_file_ccsds () { // to be executed periodically to avoid data loss
                       timer_this->publish_sd_duration += millis() - start_millis;
                       break;
     #endif
-    }    	        
+    }               
   }
+  return true;
 }
 
 bool sync_file_json () { // to be executed periodically to avoid data loss
@@ -1176,6 +1336,7 @@ bool sync_file_json () { // to be executed periodically to avoid data loss
     #endif
     }    
   }
+  return true;
 }
 
 bool publish_file (uint8_t filesystem, uint8_t encoding, ccsds_t* ccsds_ptr) {
@@ -1237,12 +1398,17 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
       // publish real-time
       switch ((uint8_t)config_this->serial_format) {
         case ENC_JSON:  build_json_str ((char*)&buffer, ccsds_ptr);
-        	        serialTransfer.sendDatum(buffer, strlen(buffer));
-                        //publish_udp_text("DEBUG: sent real-time JSON packet over serial");
+                        /*if (serialTransfer.available()) {
+                            serialTransfer.sendDatum(buffer, strlen(buffer));
+                        }
+                        else {
+                            Serial.println(buffer);
+                        } */
                         publish_udp_text(buffer);
                         break;
-        case ENC_CCSDS: serialTransfer.sendDatum((const uint8_t*)ccsds_ptr, get_ccsds_packet_len(ccsds_ptr));
-                        //publish_udp_text("DEBUG: sent real-time CCSDS packet over serial");
+        case ENC_CCSDS: /* if (serialTransfer.available()) {
+                            serialTransfer.sendDatum((const uint8_t*)ccsds_ptr, get_ccsds_packet_len(ccsds_ptr));
+                        } */
                         break;
       }
       tm_this->serial_out_rate++;
@@ -1267,12 +1433,17 @@ bool publish_serial (ccsds_t* ccsds_ptr) {
             // good packet recovered from buffer, publish
             switch ((uint8_t)config_this->serial_format) {
               case ENC_JSON:  build_json_str ((char*)&buffer, &replayed_ccsds);
-                              serialTransfer.sendDatum(buffer, strlen(buffer));
-                              //publish_udp_text("DEBUG: sent replayed JSON packet over serial");
+                              /*if (serialTransfer.available()) {
+                                  serialTransfer.sendDatum(buffer, strlen(buffer));
+                              }
+                              else {
+                                  Serial.println(buffer);
+                              }*/
                               publish_udp_text(buffer);
                               break;
-              case ENC_CCSDS: serialTransfer.sendDatum((const uint8_t*)&replayed_ccsds, get_ccsds_packet_len(&replayed_ccsds));
-                              //publish_udp_text("DEBUG: sent replayed CCSDS packet over serial");
+              case ENC_CCSDS: /* if (serialTransfer.available()) {
+                                  serialTransfer.sendDatum((const uint8_t*)&replayed_ccsds, get_ccsds_packet_len(&replayed_ccsds));
+                              } */
                               break;
             }            
             tm_this->serial_out_rate++;          
@@ -1393,7 +1564,6 @@ bool publish_yamcs (ccsds_t* ccsds_ptr) {
 }
 
 bool publish_udp (ccsds_t* ccsds_ptr) { 
-  uint16_t PID = get_ccsds_apid (ccsds_ptr) - 42;
   if (tm_this->wifi_connected) { // TODO: and publish_udp_enabled???
     build_json_str ((char*)&buffer, ccsds_ptr);
     wifiUDP.beginPacket(config_network.udp_server, config_network.udp_port);
@@ -1442,18 +1612,24 @@ bool yamcs_tc_setup () {
   if (wifiUDP_yamcs_tc.begin(WiFi.localIP(), config_network.yamcs_tc_port)) {
     sprintf (buffer, "Listening for CCSDS commands on UDP port %s:%u", WiFi.localIP().toString().c_str(), config_network.yamcs_tc_port);
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+    return true;
   }
   else {
     sprintf (buffer, "Fail to listen for commands on UDP port %s:%u", WiFi.localIP().toString().c_str(), config_network.yamcs_tc_port);
     publish_event (STS_THIS, SS_THIS, EVENT_ERROR, buffer);  
+    return false;
   }
 }
 
 bool yamcs_tc_check () {
   if (wifiUDP_yamcs_tc.parsePacket()) {
     Serial.println ("Received command");
-    wifiUDP_yamcs_tc.read((char*)&ccsds_tc_buffer, JSON_MAX_SIZE);
+    wifiUDP_yamcs_tc.read((char*)&ccsds_tc_buffer, BUFFER_MAX_SIZE);
     parse_ccsds ((ccsds_t*)&ccsds_tc_buffer);
+    return true;
+  }
+  else {
+    return false;
   }
 }
 #endif
@@ -1674,7 +1850,8 @@ void reset_packet (ccsds_t* ccsds_ptr) {
                          ov2640.exposure_ms = 0;
                          esp32.camera_rate++;
                          esp32.camera_active = true;
-                         radio.camera_active = true;                            
+                         radio.camera_active = true;  
+                         break;
     case TIMER_ESP32CAM: timer_esp32cam.camera_duration = 0;
                          timer_esp32cam.serial_duration = 0;
                          timer_esp32cam.tc_duration = 0;
@@ -1818,7 +1995,7 @@ void parse_ccsds (ccsds_t* ccsds_ptr) {
                              case TC_SET_PARAMETER:      cmd_set_parameter (tc_this->parameter, (char*)(tc_this->parameter + strlen(tc_this->parameter) + 1)); 
                                                          break;
                              case TC_FREEZE_OPSMODE:     cmd_freeze_opsmode ((uint8_t)tc_this->parameter[0]);
-                             	                         break;
+                                                         break;
                              default:                    sprintf (buffer,  "CCSDS command to %s not understood", subsystemName[SS_THIS]);
                                                          publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
                                                          break;
@@ -1905,19 +2082,35 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                              json_buffer += sprintf (json_buffer, ",\"time\":\"%02d:%02d:%02d.%02d\"", neo6mv2_ptr->hours, neo6mv2_ptr->minutes, neo6mv2_ptr->seconds, neo6mv2_ptr->centiseconds);
                            }
                            if (neo6mv2_ptr->location_valid) {
+                           	 #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
                              json_buffer += sprintf (json_buffer, ",\"loc\":[%d,%d]", neo6mv2_ptr->latitude, neo6mv2_ptr->longitude);
+                             #else
+                             json_buffer += sprintf (json_buffer, ",\"loc\":[%ld,%ld]", neo6mv2_ptr->latitude, neo6mv2_ptr->longitude);
+                             #endif
                            }
                            if (neo6mv2_ptr->altitude_valid) {
+                           	 #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
                              json_buffer += sprintf (json_buffer, ",\"alt\":%d", neo6mv2_ptr->altitude);
+                             #else
+                             json_buffer += sprintf (json_buffer, ",\"alt\":%ld", neo6mv2_ptr->altitude);
+                             #endif
                            }  
                            if (neo6mv2_ptr->location_valid and neo6mv2_ptr->altitude_valid) {
+                           	 #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
                              json_buffer += sprintf (json_buffer, ",\"zero\":[%d,%d,%d]", neo6mv2_ptr->latitude_zero, neo6mv2_ptr->longitude_zero, neo6mv2_ptr->altitude_zero);
+                             #else
+                             json_buffer += sprintf (json_buffer, ",\"zero\":[%ld,%ld,%ld]", neo6mv2_ptr->latitude_zero, neo6mv2_ptr->longitude_zero, neo6mv2_ptr->altitude_zero);
+                             #endif
                            }
                            if (neo6mv2_ptr->offset_valid) {
                              json_buffer += sprintf (json_buffer, ",\"xyz\":[%d,%d,%d]", neo6mv2_ptr->x, neo6mv2_ptr->y, neo6mv2_ptr->z);
                            }
                            if (neo6mv2_ptr->speed_valid) {
+                           	 #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
                              json_buffer += sprintf (json_buffer, ",\"v\":[%d,%d,%d]", neo6mv2_ptr->v_north, neo6mv2_ptr->v_east, neo6mv2_ptr->v_down);
+                             #else
+                             json_buffer += sprintf (json_buffer, ",\"v\":[%ld,%ld,%ld]", neo6mv2_ptr->v_north, neo6mv2_ptr->v_east, neo6mv2_ptr->v_down);
+                             #endif
                            }
                            if (neo6mv2_ptr->hdop_valid and neo6mv2_ptr->vdop_valid and neo6mv2_ptr->pdop_valid) {
                              json_buffer += sprintf (json_buffer, ",\"dop\":[%u,%u,%u]", neo6mv2_ptr->milli_hdop, neo6mv2_ptr->milli_vdop, neo6mv2_ptr->milli_pdop);
@@ -1942,9 +2135,15 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
                          break;
     case TM_PRESSURE:    {
                            tm_pressure_t* bmp280_ptr = (tm_pressure_t*)ccsds_ptr;
+                           #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
                            sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"p\":%u,\"p0\":%u,\"T\":%d,\"h\":%d,\"v_v\":%d,\"valid\":%u}", 
                                     pidName[PID], bmp280_ptr->packet_ctr, bmp280_ptr->millis, 
                                     bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->height, bmp280_ptr->velocity_v, bmp280_ptr->height_valid);
+                           #else
+                           sprintf (json_buffer, "{\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"p\":%lu,\"p0\":%lu,\"T\":%d,\"h\":%d,\"v_v\":%d,\"valid\":%u}", 
+                                    pidName[PID], bmp280_ptr->packet_ctr, bmp280_ptr->millis, 
+                                    bmp280_ptr->pressure, bmp280_ptr->zero_level_pressure, bmp280_ptr->temperature, bmp280_ptr->height, bmp280_ptr->velocity_v, bmp280_ptr->height_valid);
+                           #endif
                          }
                          break;
     case TM_RADIO:       {
@@ -1977,7 +2176,7 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
     case TC_ESP32:       { 
                            tc_esp32_t* tc_esp32_ptr = (tc_esp32_t*)ccsds_ptr;
                            *json_buffer++ = '{';
-                           json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32_ptr->cmd_id-42]);
+                           json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"millis\":%lu,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32_ptr->cmd_id-42]);
                            if (tc_esp32_ptr->cmd_id-42 == TC_REBOOT or tc_esp32_ptr->cmd_id-42 == TC_SET_OPSMODE) {
                              json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", (uint8_t)tc_esp32_ptr->parameter[0]);
                            }
@@ -1994,7 +2193,7 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
     case TC_ESP32CAM:    { 
                            tc_esp32cam_t* tc_esp32cam_ptr = (tc_esp32cam_t*)ccsds_ptr;
                            *json_buffer++ = '{';
-                           json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"ctr\":%u,\"millis\":%u,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32cam_ptr->cmd_id-42]);
+                           json_buffer += sprintf (json_buffer, "\"id\":\"%s\",\"millis\":%lu,\"cmd\":\"%s\"", pidName[PID], millis(), tcName[tc_esp32cam_ptr->cmd_id-42]);
                            if (tc_esp32cam_ptr->cmd_id-42 == TC_REBOOT or tc_esp32cam_ptr->cmd_id-42 == TC_SET_OPSMODE) {
                              json_buffer += sprintf (json_buffer, ",\"int_val\":\"%u\"", (uint8_t)tc_esp32cam_ptr->parameter[0]);
                            }
@@ -2012,7 +2211,8 @@ void build_json_str (char* json_buffer, ccsds_t* ccsds_ptr) {
 }
 
 bool parse_json (const char* json_string) {
-  static StaticJsonDocument<JSON_MAX_SIZE> obj;
+//  static Document<BUFFER_MAX_SIZE> obj;
+  static JsonDocument obj;
   deserializeJson(obj, (const char*)json_string);
   uint16_t PID = id_of (obj["id"], sizeof(pidName[0]), (char*)pidName, sizeof(pidName));
   switch (PID) {
@@ -2091,7 +2291,7 @@ bool parse_json (const char* json_string) {
                         publish_packet ((ccsds_t*)&ov2640);
                         break;
     case TIMER_ESP32CAM: // TODO: fine-tune packet
-    	    		// {\"ctr\":%u,\"idle\":%u,\"cam\":%u,\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u,%u]}
+                    // {\"ctr\":%u,\"idle\":%u,\"cam\":%u,\"fun\":[%u,%u,%u,%u,%u],\"pub\":[%u,%u,%u,%u,%u]}
                         timer_esp32cam.packet_ctr = obj["ctr"];
                         timer_esp32cam.millis = obj["millis"],
                         timer_esp32cam.camera_duration = obj["cam"];
@@ -2161,10 +2361,10 @@ bool parse_json (const char* json_string) {
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
                           case TC_FREEZE_OPSMODE:// {"cmd":"freeze_opsmode","frozen":0|1}
-                          	                 tc_esp32cam.parameter[0] = (char) atoi (obj["frozen"]);
-                          	                 tc_esp32cam.parameter[1] = 0;
+                                             tc_esp32cam.parameter[0] = (char) atoi (obj["frozen"]);
+                                             tc_esp32cam.parameter[1] = 0;
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32cam, 7);
-                          	  		 break;
+                                     break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32CAM not understood");
                                                  return false;
                             
@@ -2352,12 +2552,12 @@ bool parse_json (const char* json_string) {
                         tc_esp32.cmd_id = id_of (obj["cmd"], sizeof(tcName[0]), (char*)tcName, sizeof(tcName));
                         switch (tc_esp32.cmd_id) {
                           case TC_REBOOT:        // {"cmd":"reboot","subsystem":0|1|2}
-                                                 tc_esp32.parameter[0] = (char)obj["subsystem"];
+                                                 tc_esp32.parameter[0] = (unsigned char)obj["subsystem"];
                                                  tc_esp32.parameter[1] = 0;
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, 7);
                                                  break;
                           case TC_SET_OPSMODE:   // {"cmd":"set_opsmode","opsmode":"checkout|ready|static"}
-                                                 tc_esp32.parameter[0] = (char)id_of (obj["opsmode"], sizeof(modeName[0]), (char*)modeName, sizeof(modeName));
+                                                 tc_esp32.parameter[0] = (unsigned char)id_of (obj["opsmode"], sizeof(modeName[0]), (char*)modeName, sizeof(modeName));
                                                  tc_esp32.parameter[1] = 0;
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, 7);
                                                  break;
@@ -2376,10 +2576,10 @@ bool parse_json (const char* json_string) {
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, strlen (obj["parameter"]) + strlen (obj["value"]) + 8);
                                                  break;
                           case TC_FREEZE_OPSMODE:// {"cmd":"freeze_opsmode","frozen"0:1}
-                          	                 tc_esp32.parameter[0] = (char)obj["frozen"];
+                                             tc_esp32.parameter[0] = (unsigned char)obj["frozen"];
                                                  tc_esp32.parameter[1] = 0;
                                                  set_ccsds_payload_len ((ccsds_t*)&tc_esp32, 7);
-                          	  		 break;
+                                     break;
                           default:               publish_event (STS_THIS, SS_THIS, EVENT_ERROR, "JSON command to ESP32 not understood");
                                                  return false;
                             
@@ -2431,19 +2631,24 @@ bool serial_setup () {
   //Serial.setRxBufferSize(128);
   #ifdef SERIAL_TCTM
   Serial.setDebugOutput (false);
-  serialTransfer.begin(Serial);
+  //serialTransfer.begin(Serial);
   #endif
+  return true;
 }
 
 void serial_keepalive () {
   #ifdef SERIAL_TCTM
   if (millis() - var_timer.last_serial_out_millis > KEEPALIVE_INTERVAL) {
     if (tm_this->serial_connected) {
-      serialTransfer.sendDatum("O", 1);
+      if (serialTransfer.available()) { 
+        serialTransfer.sendDatum("O", 1);
+      }
       //publish_udp_text("DEBUG: Sent over serial: [O]");
     }
     else {
-      serialTransfer.sendDatum("o", 1);
+      if (serialTransfer.available()) {     
+        serialTransfer.sendDatum("o", 1);
+      }
       //publish_udp_text("DEBUG: Sent over serial: [o]");
     }
     var_timer.last_serial_out_millis = millis();
@@ -2464,10 +2669,11 @@ bool serial_check () {
     tm_this->serial_in_rate++;
     tm_this->serial_connected = true;
     var_timer.last_serial_in_millis = millis();
-    //sprintf (buffer, "DEBUG: Received over serial: [%s]\0", serial_in_buffer);
     publish_udp_text(buffer);
     return true;
   }
+  else {
+    sprintf (buffer, "DEBUG: Received over serial: [%s]\0", serial_in_buffer); 
   #endif
   return false;
 }
@@ -2522,6 +2728,7 @@ bool cmd_reboot (uint8_t subsystem) {
             delay (1000);
             ESP.restart();
   }     
+  return true;
 }
 
 bool cmd_set_opsmode (uint8_t opsmode) {
@@ -2534,6 +2741,7 @@ bool cmd_set_opsmode (uint8_t opsmode) {
     sprintf (buffer, "Opsmode '%s' not known or not allowed", modeName[opsmode]);
     publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, buffer);
   }
+  return true;
 }
 
 bool cmd_set_parameter (const char* parameter, const char* value) {
@@ -2556,6 +2764,7 @@ bool cmd_set_parameter (const char* parameter, const char* value) {
 bool cmd_load_config (const char* filename) {
   if (tm_this->opsmode != MODE_NOMINAL) {
     file_load_config (config_this->ftp_fs, filename); // TODO: needs to become config_fs
+    return true;
   }
   else {
     publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command not allowed in NOMINAL mode");
@@ -2566,6 +2775,7 @@ bool cmd_load_config (const char* filename) {
 bool cmd_load_routing (const char* filename) {
   if (esp32.opsmode == MODE_CHECKOUT) {
     file_load_routing (config_this->ftp_fs, filename);
+    return true;
   }
   else {
     publish_event (STS_THIS, SS_THIS, EVENT_CMD_FAIL, "Command only allowed in CHECKOUT mode");
@@ -2575,44 +2785,58 @@ bool cmd_load_routing (const char* filename) {
 
 bool cmd_toggle_routing (uint16_t PID, const char interface) {
   // TODO: TBW + integrate
+  return false;
 }
 
 bool cmd_freeze_opsmode (bool frozen) {
   File file_lock;
   switch (tm_this->buffer_fs) {
   case FS_LITTLEFS: if (frozen) {
-  		      file_lock = LITTLEFS.open(lock_filename, "w");
+                      #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
+                      file_lock = LITTLEFS.open(lock_filename, "w");
+                      #else
+                      file_lock = LittleFS.open(lock_filename, "w");
+                      #endif
                       file_lock.write ((char)tm_this->opsmode);
                       file_lock.close ();
                       sprintf (buffer, "Frozen opsmode to '%s'", modeName[tm_this->opsmode]);
                       publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
                     }
                     else {
+                      #ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x  
                       LITTLEFS.remove(lock_filename);
+                      #else
+                      LittleFS.remove(lock_filename);
+                      #endif
                       publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Removed opsmode freeze");
                     }
                     break;
   #ifdef PLATFORM_ESP32CAM
   case FS_SD_MMC:  if (frozen) {
-  		      file_lock = SD_MMC.open(lock_filename, "a+");
-                      file_lock.write ((char)tm_this->opsmode);
-                      file_lock.close ();
-                      sprintf (buffer, "Frozen opsmode to '%s'", modeName[tm_this->opsmode]);
-                      publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
-                    }
-                    else {
-                      SD_MMC.remove(lock_filename);
-                      publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Removed opsmode freeze");
-                    }
+                     file_lock = SD_MMC.open(lock_filename, "a+");
+                     file_lock.write ((char)tm_this->opsmode);
+                     file_lock.close ();
+                     sprintf (buffer, "Frozen opsmode to '%s'", modeName[tm_this->opsmode]);
+                     publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, buffer);
+                   }
+                   else {
+                     SD_MMC.remove(lock_filename);
+                     publish_event (STS_THIS, SS_THIS, EVENT_CMD_RESP, "Removed opsmode freeze");
+                   }
                    break;
   #endif
   }
+  return true;
 }
 
 bool cmd_replay_start (char* filename, bool realtime) {
+    // TODO: implement
+    return false;
 }
 
 bool cmd_replay_stop () {
+    // TODO: implement
+    return false;
 }
 
 // SUPPORT FUNCTIONS

@@ -12,6 +12,9 @@
 #ifdef ARDUINO_ESP32_DEV
 #define PLATFORM_ESP32CAM
 #endif
+#ifdef ARDUINO_ESP8266_NODEMCU
+#define PLATFORM_ESP8266_RADIO
+#endif
 
 //#define ASYNCUDP // uncomment to use AsyncUDP for commanding
 //#define SERIAL_TCTM
@@ -31,13 +34,18 @@
 #include <ESPFtpServer.h>
 #include <FS.h>
 #include <SerialTransfer.h>
+#ifndef ESP_ARDUINO_VERSION_MAJOR // ESP32 core v1.0.x
 #include <LITTLEFS.h>
+#else
+#include <LittleFS.h>
+#endif
 #include <UnixTime.h>
 
-#define SERIAL_TCTM
+//#define SERIAL_TCTM
 
 #define SERIAL_BAUD               115200
-#define JSON_MAX_SIZE             512
+#define BUFFER_MAX_SIZE           512
+#define PARAMETER_MAX_SIZE        128
 #define WIFI_TIMEOUT              20     // s (time-out when initializing)
 #define NTP_TIMEOUT               10     // s (time-out when initializing)
 #define WIFI_CHECK                1      // s (check interval to ensure connection, otherwise buffer)
@@ -226,9 +234,24 @@ struct __attribute__ ((packed)) ccsds_hdr_t {
   uint8_t     pkt_len_L;               // 5
 }; 
 
+struct __attribute__ ((packed)) ccsds_sec_hdr_t {
+  uint8_t     apidQ_H:1;               // 0:7
+  bool        playback:1;              // 0: 6
+  bool        spare0:1;                // 0:  5
+  bool        crc_flag:1;              // 0:   4
+  uint8_t     version:4;               // 0:    3-0
+  uint32_t    apidQ_L:24;              // 1-3
+  uint8_t     spare1;                  // 4
+  uint8_t     source_id;               // 5
+  uint16_t    timestamp_msw;           // 6-7
+  uint16_t    timestamp_lsw;           // 8-9
+  uint16_t    timestamp_subsec;        // 10-11
+  uint16_t    spare2;                  // 12-13
+}; 
+
 struct __attribute__ ((packed)) ccsds_t {
   ccsds_hdr_t ccsds_hdr;
-  byte        blob[JSON_MAX_SIZE+6];   // sized for longest possible sts_esp32/sts_esp32cam packet
+  byte        blob[PARAMETER_MAX_SIZE+6];   // sized for longest possible sts_esp32/sts_esp32cam packet
 };
 
 struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
@@ -237,7 +260,7 @@ struct __attribute__ ((packed)) sts_esp32_t { // APID: 42 (2a)
   uint16_t    packet_ctr;
   uint8_t     type:4;                  // 4-7
   uint8_t     subsystem:4;             //  0-3
-  char        message[JSON_MAX_SIZE];
+  char        message[PARAMETER_MAX_SIZE];
 };
 
 struct __attribute__ ((packed)) sts_esp32cam_t { // APID: 43 (2b)
@@ -246,7 +269,7 @@ struct __attribute__ ((packed)) sts_esp32cam_t { // APID: 43 (2b)
   uint16_t    packet_ctr;
   uint8_t     type:4;                  // 4-7
   uint8_t     subsystem:4;             //  0-3
-  char        message[JSON_MAX_SIZE];
+  char        message[PARAMETER_MAX_SIZE];
 }; 
 
 struct __attribute__ ((packed)) tm_esp32_t { // APID: 44 (2c)
@@ -383,7 +406,7 @@ struct __attribute__ ((packed)) tm_camera_t { // APID: 46 (2e)
   uint8_t     wifi_ms; 
   uint8_t     sd_ms;
   uint8_t     exposure_ms;
-  char        filename[30]; 
+  char        filename[36]; 
 };
 
 struct __attribute__ ((packed)) tm_gps_t { // APID: 47 (2f)
@@ -565,13 +588,13 @@ struct __attribute__ ((packed)) timer_esp32cam_t { // APID: 52 (34)  // TODO: fi
 struct __attribute__ ((packed)) tc_esp32_t { // APID: 53 (35)
   ccsds_hdr_t ccsds_hdr;
   uint8_t     cmd_id;
-  char        parameter[JSON_MAX_SIZE];
+  char        parameter[PARAMETER_MAX_SIZE];
 }; 
 
 struct __attribute__ ((packed)) tc_esp32cam_t { // APID: 54 (36)
   ccsds_hdr_t ccsds_hdr;
   uint8_t     cmd_id;
-  char        parameter[JSON_MAX_SIZE];
+  char        parameter[PARAMETER_MAX_SIZE];
 }; 
 
 struct __attribute__ ((packed)) config_network_t {
@@ -725,7 +748,7 @@ extern timer_esp32_t*      timer_other;
 extern config_esp32cam_t*  config_this;
 #endif
 
-extern char buffer[JSON_MAX_SIZE];
+extern char buffer[BUFFER_MAX_SIZE];
 extern File file_ccsds, file_json;
 extern UnixTime datetime;
 
@@ -812,6 +835,6 @@ extern String get_hex_str (char* blob, uint16_t length);
 extern void hex_to_bin (byte* destination, char* hex_input);
 extern int8_t sign (int16_t x);
 
-#endif // PLATFORM_ESP32 or PLATFORM_ESP32CAM
+#endif // PLATFORM_ESP8266_RADIO
 
 #endif // _FLI3D_H_
