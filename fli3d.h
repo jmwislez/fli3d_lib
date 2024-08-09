@@ -4,7 +4,7 @@
  
 #ifndef _FLI3D_H_
 #define _FLI3D_H_
-#define LIB_VERSION "Fli3d lib 1.2.0/20240802"
+#define LIB_VERSION "Fli3d lib 1.2.1/20240809"
 
 #ifdef ARDUINO_MH_ET_LIVE_ESP32MINIKIT
 #define PLATFORM_ESP32
@@ -46,7 +46,7 @@
 #define SERIAL_BAUD               115200
 #define BUFFER_MAX_SIZE           512
 #define PARAMETER_MAX_SIZE        128
-#define WIFI_TIMEOUT              20     // s (time-out when initializing)
+#define WIFI_TIMEOUT              30     // s (time-out when initializing)
 #define NTP_TIMEOUT               10     // s (time-out when initializing)
 #define WIFI_CHECK                1      // s (check interval to ensure connection, otherwise buffer)
 #define NTP_CHECK                 1      // s (check interval in background after time-out)

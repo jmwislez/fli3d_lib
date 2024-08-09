@@ -1031,76 +1031,63 @@ bool wifi_ap_setup () {
   return true;
 }
 
-bool wifi_sta_setup_old () {
-  WiFi.begin(config_network.wifi_ssid, config_network.wifi_password);  
-  timeClient.begin();
-  uint8_t i = 0;
-  while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
-    delay (1000);
-  } 
-  if (i >= WIFI_TIMEOUT) {
-    sprintf (buffer, "Tired of waiting for connection of %s to %s WiFi, continuing in background", subsystemName[SS_THIS], config_network.wifi_ssid);
-    publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
-  }
-  else {
-    sprintf (buffer, "%s WiFi connected to %s with IP %s", subsystemName[SS_THIS], config_network.wifi_ssid, WiFi.localIP().toString().c_str());
-    publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
-    if (config_this->wifi_udp_enable) {
-      tm_this->wifi_udp_enabled = true;
-    }
-    if (config_this->wifi_yamcs_enable) {
-      tm_this->wifi_yamcs_enabled = true;
-    }
-    tm_this->wifi_connected = true;
-  } 
-  i = 0;
-  ntp_check();
-  return tm_this->wifi_connected;
-}
-
 bool wifi_sta_setup () {
   uint8_t i = 0;
   uint8_t j = 0;
   uint8_t k = 0;
+  bool wifi_detected = false;
   int num_wifi_available = WiFi.scanNetworks();
+  // first try network from config file, if detected during scan
   while (k++ < num_wifi_available) {
     if (!strcmp(config_network.wifi_ssid, WiFi.SSID(k).c_str())) {
+    	wifi_detected = true;
       WiFi.begin(config_network.wifi_ssid, config_network.wifi_password); 
       while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
         delay (1000);
       }
+      if (WiFi.status() != WL_CONNECTED) {
+        sprintf (buffer, "%s tired of trying to connect to %s configured WiFi network", subsystemName[SS_THIS], config_network.wifi_ssid);
+        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
+      }
     }
-  } 
+  }
+  if (!wifi_detected) {
+  	sprintf (buffer, "%s did not detect %s configured WiFi network", subsystemName[SS_THIS], default_wifi_ssid[j]);
+    publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
+  }
   if (WiFi.status() != WL_CONNECTED) {
-    sprintf (buffer, "Tired of waiting for connection of %s to %s WiFi", subsystemName[SS_THIS], config_network.wifi_ssid);
-    publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
+  	// try all known networks
     while (j < NUMBER_OF_WIFI and WiFi.status() != WL_CONNECTED) {
       k = 0;
+      wifi_detected = false;
       while (k++ < num_wifi_available) {
         if (!strcmp(default_wifi_ssid[j], WiFi.SSID(k).c_str())) {
+          wifi_detected = true;
           WiFi.begin(default_wifi_ssid[j], default_wifi_password[j]); 
           i = 0;
           while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
             delay (1000);
           }
+          if (WiFi.status() != WL_CONNECTED) {
+            sprintf (buffer, "%s tired of trying to connect to %s WiFi network", subsystemName[SS_THIS], default_wifi_ssid[j]);
+            publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
+            j++;
+          }
         }
       }
-      if (WiFi.status() != WL_CONNECTED) {
-        sprintf (buffer, "Tired of waiting for connection of %s to %s WiFi", subsystemName[SS_THIS], default_wifi_ssid[j]);
-        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
-    j++;
-      }
-      else {
-        strcpy (config_network.wifi_ssid, default_wifi_ssid[j]);
+      if (!wifi_detected) {
+        sprintf (buffer, "%s did not detect %s WiFi network", subsystemName[SS_THIS], default_wifi_ssid[j]);
+        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);      	  
       }
     }
   }
-  if (j != 0) {
-    strcpy (config_network.udp_server, default_udp_server[j]);
-    strcpy (config_network.yamcs_server, default_yamcs_server[j]);
-  }
   if (WiFi.status() == WL_CONNECTED) {
-    sprintf (buffer, "%s WiFi connected to %s with IP %s", subsystemName[SS_THIS], config_network.wifi_ssid, WiFi.localIP().toString().c_str());
+  	if (j != 0) {
+      strcpy (config_network.wifi_ssid, default_wifi_ssid[j]);
+      strcpy (config_network.udp_server, default_udp_server[j]);
+      strcpy (config_network.yamcs_server, default_yamcs_server[j]);
+    }
+    sprintf (buffer, "%s connected to WiFi network %s with IP %s", subsystemName[SS_THIS], config_network.wifi_ssid, WiFi.localIP().toString().c_str());
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
     if (config_this->wifi_udp_enable) {
       tm_this->wifi_udp_enabled = true;
