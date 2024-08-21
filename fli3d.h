@@ -4,7 +4,7 @@
  
 #ifndef _FLI3D_H_
 #define _FLI3D_H_
-#define LIB_VERSION "Fli3d lib 1.2.1/20240809"
+#define LIB_VERSION "Fli3d lib 1.2.2/20240813"
 
 #ifdef ARDUINO_MH_ET_LIVE_ESP32MINIKIT
 #define PLATFORM_ESP32
@@ -50,7 +50,7 @@
 #define NTP_TIMEOUT               10     // s (time-out when initializing)
 #define WIFI_CHECK                1      // s (check interval to ensure connection, otherwise buffer)
 #define NTP_CHECK                 1      // s (check interval in background after time-out)
-#define RADIO_BAUD                2000   // transmission speed over 433 MHz radio
+#define RADIO_BAUD                1000   // transmission speed over 433 MHz radio
 #define KEEPALIVE_INTERVAL        200    // ms for loss of connection detection of serial connection between ESP32 and ESP32cam
 #define BUFFER_RELEASE_BATCH_SIZE 3      // TM buffer is released by this number of packets at a time
 #define MIN_MEM_FREE              70000  // TM buffering stops when memory is below this value 

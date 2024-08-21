@@ -354,7 +354,7 @@ void load_default_config () {
   strcpy (config_network.ftp_password, default_ftp_password); 
   strcpy (config_network.udp_server, default_udp_server[0]);
   strcpy (config_network.yamcs_server, default_yamcs_server[0]); 
-  strcpy (config_network.ntp_server, default_ntp_server);
+  strcpy (config_network.ntp_server, default_ntp_server[0]);
   config_network.udp_port = default_udp_port; 
   config_network.yamcs_tm_port = default_yamcs_tm_port; 
   config_network.yamcs_tc_port = default_yamcs_tc_port; 
@@ -1007,6 +1007,13 @@ bool wifi_setup () {
   bool return_wifi_sta = true;
   bool return_wifi_yamcs = true;
   WiFi.mode(WIFI_AP_STA); 
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+  #ifdef PLATFORM_ESP32
+  WiFi.setHostname("fli3d-esp32");
+  #endif
+  #ifdef PLATFORM_ESP32CAM
+  WiFi.setHostname("fli3d-esp32cam");
+  #endif
   if (config_this->wifi_ap_enable) {
     return_wifi_ap = wifi_ap_setup ();
     tm_this->wifi_enabled = true;
@@ -1032,60 +1039,65 @@ bool wifi_ap_setup () {
 }
 
 bool wifi_sta_setup () {
-  uint8_t i = 0;
-  uint8_t j = 0;
-  uint8_t k = 0;
+  uint8_t wifi_timeout_ctr = 0;
+  uint8_t configured_wifi_id = 0;
+  uint8_t scanned_wifi_id = 0;
   bool wifi_detected = false;
-  int num_wifi_available = WiFi.scanNetworks();
-  // first try network from config file, if detected during scan
-  while (k++ < num_wifi_available) {
-    if (!strcmp(config_network.wifi_ssid, WiFi.SSID(k).c_str())) {
-    	wifi_detected = true;
-      WiFi.begin(config_network.wifi_ssid, config_network.wifi_password); 
-      while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
+  int scanned_wifi_num = WiFi.scanNetworks();
+  sprintf (buffer, "%s found %u WiFi networks", subsystemName[SS_THIS], scanned_wifi_num);
+  publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
+  while (scanned_wifi_id < scanned_wifi_num) {
+    if (!strcmp(config_network.wifi_ssid, WiFi.SSID(scanned_wifi_id).c_str())) {
+      wifi_detected = true;
+      wifi_timeout_ctr = 0;
+      WiFi.begin(config_network.wifi_ssid, config_network.wifi_password);
+      while (wifi_timeout_ctr++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
         delay (1000);
       }
       if (WiFi.status() != WL_CONNECTED) {
-        sprintf (buffer, "%s tired of trying to connect to %s configured WiFi network", subsystemName[SS_THIS], config_network.wifi_ssid);
+        sprintf (buffer, "%s tired of trying to connect to default WiFi network %s after %u seconds", subsystemName[SS_THIS], config_network.wifi_ssid, WIFI_TIMEOUT);
         publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
       }
     }
+    scanned_wifi_id++;
   }
   if (!wifi_detected) {
-  	sprintf (buffer, "%s did not detect %s configured WiFi network", subsystemName[SS_THIS], default_wifi_ssid[j]);
-    publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer); 
+    sprintf (buffer, "%s did not detect default WiFi network %s", subsystemName[SS_THIS], config_network.wifi_ssid);
+    publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer); 
   }
   if (WiFi.status() != WL_CONNECTED) {
-  	// try all known networks
-    while (j < NUMBER_OF_WIFI and WiFi.status() != WL_CONNECTED) {
-      k = 0;
+  	// try all configured networks
+    while (configured_wifi_id < NUMBER_OF_WIFI and WiFi.status() != WL_CONNECTED) {
+      scanned_wifi_id = 0;
       wifi_detected = false;
-      while (k++ < num_wifi_available) {
-        if (!strcmp(default_wifi_ssid[j], WiFi.SSID(k).c_str())) {
+      while (scanned_wifi_id < scanned_wifi_num and WiFi.status() != WL_CONNECTED) {
+        if (!strcmp(default_wifi_ssid[configured_wifi_id], WiFi.SSID(scanned_wifi_id).c_str())) {
           wifi_detected = true;
-          WiFi.begin(default_wifi_ssid[j], default_wifi_password[j]); 
-          i = 0;
-          while (i++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
+          WiFi.begin(default_wifi_ssid[configured_wifi_id], default_wifi_password[configured_wifi_id]); 
+          wifi_timeout_ctr = 0;
+          while (wifi_timeout_ctr++ < WIFI_TIMEOUT and WiFi.status() != WL_CONNECTED) {
             delay (1000);
           }
           if (WiFi.status() != WL_CONNECTED) {
-            sprintf (buffer, "%s tired of trying to connect to %s WiFi network", subsystemName[SS_THIS], default_wifi_ssid[j]);
+            sprintf (buffer, "%s tired of trying to connect to %s WiFi network", subsystemName[SS_THIS], default_wifi_ssid[configured_wifi_id]);
             publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);
-            j++;
           }
         }
+        scanned_wifi_id++;
       }
       if (!wifi_detected) {
-        sprintf (buffer, "%s did not detect %s WiFi network", subsystemName[SS_THIS], default_wifi_ssid[j]);
-        publish_event (STS_THIS, SS_THIS, EVENT_WARNING, buffer);      	  
+        sprintf (buffer, "%s did not detect %s WiFi network", subsystemName[SS_THIS], default_wifi_ssid[configured_wifi_id]);
+        publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);      	  
       }
+      configured_wifi_id++;
     }
   }
   if (WiFi.status() == WL_CONNECTED) {
-  	if (j != 0) {
-      strcpy (config_network.wifi_ssid, default_wifi_ssid[j]);
-      strcpy (config_network.udp_server, default_udp_server[j]);
-      strcpy (config_network.yamcs_server, default_yamcs_server[j]);
+  	if (configured_wifi_id-- != 0) {
+      strcpy (config_network.wifi_ssid, default_wifi_ssid[configured_wifi_id]);
+      strcpy (config_network.udp_server, default_udp_server[configured_wifi_id]);
+      strcpy (config_network.yamcs_server, default_yamcs_server[configured_wifi_id]);
+      strcpy (config_network.ntp_server, default_ntp_server[configured_wifi_id]);
     }
     sprintf (buffer, "%s connected to WiFi network %s with IP %s", subsystemName[SS_THIS], config_network.wifi_ssid, WiFi.localIP().toString().c_str());
     publish_event (STS_THIS, SS_THIS, EVENT_INIT, buffer);
